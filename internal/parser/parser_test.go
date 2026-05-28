@@ -118,9 +118,9 @@ func TestExtractText(t *testing.T) {
 
 func TestGetToolUses(t *testing.T) {
 	tests := []struct {
-		name    string
-		content interface{}
-		wantLen int
+		name      string
+		content   interface{}
+		wantNames []string
 	}{
 		{
 			name: "list with tool_use blocks",
@@ -129,31 +129,37 @@ func TestGetToolUses(t *testing.T) {
 				map[string]interface{}{"type": "tool_use", "name": "Bash", "id": "t1"},
 				map[string]interface{}{"type": "tool_use", "name": "Read", "id": "t2"},
 			},
-			wantLen: 2,
+			wantNames: []string{"Bash", "Read"},
 		},
 		{
 			name: "list without tool_use",
 			content: []interface{}{
 				map[string]interface{}{"type": "text", "text": "just text"},
 			},
-			wantLen: 0,
+			wantNames: nil,
 		},
 		{
-			name:    "nil returns empty",
-			content: nil,
-			wantLen: 0,
+			name:      "nil returns empty",
+			content:   nil,
+			wantNames: nil,
 		},
 		{
-			name:    "string content returns empty",
-			content: "not a list",
-			wantLen: 0,
+			name:      "string content returns empty",
+			content:   "not a list",
+			wantNames: nil,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := GetToolUses(tt.content)
-			if len(got) != tt.wantLen {
-				t.Errorf("GetToolUses() returned %d items, want %d", len(got), tt.wantLen)
+			if len(got) != len(tt.wantNames) {
+				t.Fatalf("GetToolUses() returned %d items, want %d", len(got), len(tt.wantNames))
+			}
+			for i, block := range got {
+				name, _ := block["name"].(string)
+				if name != tt.wantNames[i] {
+					t.Errorf("item[%d] name = %q, want %q", i, name, tt.wantNames[i])
+				}
 			}
 		})
 	}
@@ -184,8 +190,18 @@ func TestGetToolUses_PreservesFields(t *testing.T) {
 // --- IsNoise ---
 
 func TestIsNoise(t *testing.T) {
-	// Exhaustively test each noise type defined in NoiseTypes
-	for noiseType := range NoiseTypes {
+	// Hardcoded noise types — if the SUT's NoiseTypes changes, this test
+	// should break and force review of the new noise classification.
+	expectedNoiseTypes := []string{
+		"file-history-snapshot",
+		"attachment",
+		"bridge-session",
+		"last-prompt",
+		"permission-mode",
+		"ai-title",
+		"queue-operation",
+	}
+	for _, noiseType := range expectedNoiseTypes {
 		t.Run("noise_type_"+noiseType, func(t *testing.T) {
 			entry := map[string]interface{}{"type": noiseType}
 			if !IsNoise(entry) {

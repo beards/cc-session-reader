@@ -41,8 +41,8 @@ func TestSummarizeToolUse_Bash_LongCommandTruncation(t *testing.T) {
 		t.Fatalf("expected prefix %q, got %q", wantPrefix, got)
 	}
 	commandPart := strings.TrimPrefix(got, wantPrefix)
-	if len([]rune(commandPart)) != maxCommandLen {
-		t.Errorf("command part should be %d runes, got %d", maxCommandLen, len([]rune(commandPart)))
+	if len([]rune(commandPart)) != 80 {
+		t.Errorf("command part should be %d runes, got %d", 80, len([]rune(commandPart)))
 	}
 }
 
@@ -50,7 +50,7 @@ func TestSummarizeToolUse_Bash_LongCommandTruncation(t *testing.T) {
 // CJK characters are 3 bytes each in UTF-8, so a string with 50 CJK chars
 // is 150 bytes but only 50 runes. It must NOT be truncated since 50 < 80.
 func TestSummarizeToolUse_Bash_CJKRuneVsByteTruncation(t *testing.T) {
-	// 50 CJK characters = 150 bytes, but only 50 runes (< maxCommandLen 80)
+	// 50 CJK characters = 150 bytes, but only 50 runes (< 80)
 	cjkCmd := strings.Repeat("世", 50) // "世" repeated 50 times
 	inp := map[string]interface{}{
 		"command": cjkCmd,
@@ -62,7 +62,7 @@ func TestSummarizeToolUse_Bash_CJKRuneVsByteTruncation(t *testing.T) {
 	}
 }
 
-// CJK string longer than maxCommandLen runes should be truncated at the rune boundary.
+// CJK string longer than 80 runes should be truncated at the rune boundary.
 func TestSummarizeToolUse_Bash_CJKLongTruncation(t *testing.T) {
 	cjkCmd := strings.Repeat("世", 100) // 100 CJK runes
 	inp := map[string]interface{}{
@@ -71,8 +71,8 @@ func TestSummarizeToolUse_Bash_CJKLongTruncation(t *testing.T) {
 	got := SummarizeToolUse("Bash", inp)
 	commandPart := strings.TrimPrefix(got, "[Bash] ")
 	runes := []rune(commandPart)
-	if len(runes) != maxCommandLen {
-		t.Errorf("expected %d runes after truncation, got %d", maxCommandLen, len(runes))
+	if len(runes) != 80 {
+		t.Errorf("expected %d runes after truncation, got %d", 80, len(runes))
 	}
 	// Each rune should still be the original CJK character (no mid-byte corruption)
 	for i, r := range runes {
@@ -218,14 +218,9 @@ func TestSummarizeToolUse_AskUserQuestion_ThreeQuestions(t *testing.T) {
 		},
 	}
 	got := SummarizeToolUse("AskUserQuestion", inp)
-	if !strings.Contains(got, "Q1: First question?") {
-		t.Errorf("missing Q1 in output: %q", got)
-	}
-	if !strings.Contains(got, "Q2: Second question?") {
-		t.Errorf("missing Q2 in output: %q", got)
-	}
-	if !strings.Contains(got, "Q3: Third question?") {
-		t.Errorf("missing Q3 in output: %q", got)
+	want := "[AskUserQuestion] Q1: First question?\n  [AskUserQuestion] Q2: Second question?\n  [AskUserQuestion] Q3: Third question?"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
@@ -249,21 +244,23 @@ func TestSummarizeToolUse_Skill(t *testing.T) {
 			want: "[Skill] /pm build login page",
 		},
 		{
+			// "[Skill] /develop " = 17 runes, truncated to 80 total = 17 + 63 x's
 			name: "skill truncated at 80 runes",
 			inp: map[string]interface{}{
 				"skill": "develop",
 				"args":  strings.Repeat("x", 100),
 			},
+			want: "[Skill] /develop " + strings.Repeat("x", 63),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := SummarizeToolUse("Skill", tt.inp)
-			if tt.want != "" && got != tt.want {
+			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
-			if len([]rune(got)) > maxSkillLen {
-				t.Errorf("skill summary exceeds %d runes: %d", maxSkillLen, len([]rune(got)))
+			if len([]rune(got)) > 80 {
+				t.Errorf("skill summary exceeds 80 runes: %d", len([]rune(got)))
 			}
 		})
 	}
@@ -522,13 +519,13 @@ func TestTruncate_ViaToolUse(t *testing.T) {
 		},
 		{
 			name:          "ASCII at exactly max is unchanged",
-			command:       strings.Repeat("x", maxCommandLen),
+			command:       strings.Repeat("x", 80),
 			wantUnchanged: true,
 		},
 		{
 			name:    "ASCII longer than max is truncated",
-			command: strings.Repeat("x", maxCommandLen+20),
-			wantLen: maxCommandLen,
+			command: strings.Repeat("x", 80+20),
+			wantLen: 80,
 		},
 		{
 			name:          "CJK under max runes but over max bytes is NOT truncated",
@@ -538,7 +535,7 @@ func TestTruncate_ViaToolUse(t *testing.T) {
 		{
 			name:    "CJK over max runes is truncated at rune boundary",
 			command: strings.Repeat("测", 100), // 100 runes
-			wantLen: maxCommandLen,
+			wantLen: 80,
 		},
 	}
 	for _, tt := range tests {
