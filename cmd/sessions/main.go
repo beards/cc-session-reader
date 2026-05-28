@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -228,17 +229,35 @@ func cmdStats(args []string) {
 }
 
 func cmdAudit(args []string) {
-	fs := flag.NewFlagSet("audit", flag.ExitOnError)
-	samples := fs.Int("n", 5, "number of samples per category")
-	_ = fs.Parse(reorderArgs(args))
+	if err := runAudit(args, os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
-	sessionID := resolveSessionArg(fs)
-	transcriptPath := findTranscriptOrExit(sessionID)
+func runAudit(args []string, out io.Writer, errOut io.Writer) error {
+	fs := flag.NewFlagSet("audit", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	samples := fs.Int("n", 5, "number of samples per category")
+	if err := fs.Parse(reorderArgs(args)); err != nil {
+		return err
+	}
+
+	if fs.NArg() < 1 {
+		return fmt.Errorf("Error: session_id is required")
+	}
+	sessionID, err := parser.ResolveSessionID(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	transcriptPath := parser.FindTranscript(sessionID)
+	if transcriptPath == "" {
+		return fmt.Errorf("Transcript not found: %s", sessionID)
+	}
 
 	entries, err := parser.ParseTranscript(transcriptPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing transcript: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("Error parsing transcript: %v", err)
 	}
 
 	result := analyzer.ComputeAudit(entries)
@@ -249,14 +268,15 @@ func cmdAudit(args []string) {
 			continue
 		}
 		shown := sampleCount(*samples, len(items))
-		fmt.Printf("=== %s (%d items, showing %d) ===\n", catName, len(items), shown)
+		fmt.Fprintf(out, "=== %s (%d items, showing %d) ===\n", catName, len(items), shown)
 		for _, item := range items[:shown] {
-			fmt.Printf("  %s\n\n", item)
+			fmt.Fprintf(out, "  %s\n\n", item)
 		}
 		if len(items) > shown {
-			fmt.Printf("  ... and %d more\n\n", len(items)-shown)
+			fmt.Fprintf(out, "  ... and %d more\n\n", len(items)-shown)
 		}
 	}
+	return nil
 }
 
 // --- helpers ---
