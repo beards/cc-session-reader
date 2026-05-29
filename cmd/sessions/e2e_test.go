@@ -56,11 +56,10 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 			},
 		},
 		{
-			name: "audit accepts negative sample count without crashing",
-			args: []string{"audit", sid, "-n", "-1"},
+			name: "audit samples cut tool results",
+			args: []string{"audit", sid, "-n", "5"},
 			want: []string{
-				"=== tool_result_cut (1 items, showing 0) ===",
-				"... and 1 more",
+				"=== tool_result_cut (1 items, showing 1) ===",
 			},
 		},
 		{
