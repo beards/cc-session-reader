@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
@@ -53,7 +55,7 @@ func printUsage() {
 
 func cmdList(args []string) {
 	if err := runList(args, os.Stdout, os.Stderr, parser.DefaultStore()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -253,8 +255,23 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 	}
 
 	fmt.Fprintln(out)
-	rawAPI, errRaw := tokens.CountTokensAPI(result.RawText)
-	filtAPI, errFilt := tokens.CountTokensAPI(result.FilteredText)
+	// Count raw and filtered tokens concurrently: the two API calls are
+	// independent, so running them in parallel roughly halves wall-clock time.
+	var (
+		rawAPI, filtAPI int
+		errRaw, errFilt error
+		wg              sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		rawAPI, errRaw = tokens.CountTokensAPI(result.RawText)
+	}()
+	go func() {
+		defer wg.Done()
+		filtAPI, errFilt = tokens.CountTokensAPI(result.FilteredText)
+	}()
+	wg.Wait()
 	if errRaw == nil && errFilt == nil {
 		saved := rawAPI - filtAPI
 		fmt.Fprintln(out, "=== Tokens (Anthropic API) ===")
@@ -281,7 +298,7 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 
 func cmdAudit(args []string) {
 	if err := runAudit(args, os.Stdout, os.Stderr, parser.DefaultStore()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -351,15 +368,19 @@ func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 		return fmt.Errorf("parsing transcript: %w", err)
 	}
 
-	// Build maps: shortID -> ToolUse, full toolUseID -> ToolResult
-	toolUses := make(map[string]session.ToolUse)
+	// Build maps: shortID -> []ToolUse (collisions collected, not overwritten),
+	// full toolUseID -> ToolResult.
+	// Short IDs are only the last 4 chars of tool_use_id, so collisions are
+	// common in long sessions. Collecting all matches lets us detect a collision
+	// and refuse to guess, instead of silently returning the last one written.
+	toolUsesByShortID := make(map[string][]session.ToolUse)
 	toolResults := make(map[string]session.ToolResult)
 
 	for _, event := range events {
 		if event.Assistant != nil {
 			for _, tu := range event.Assistant.ToolUses {
 				shortID := session.ToolShortID(tu.ID)
-				toolUses[shortID] = tu
+				toolUsesByShortID[shortID] = append(toolUsesByShortID[shortID], tu)
 			}
 		}
 		if event.Tool != nil {
@@ -370,11 +391,19 @@ func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	// Expand each requested ID
 	found := 0
 	for _, reqID := range requestedIDs {
-		tu, ok := toolUses[reqID]
-		if !ok {
+		candidates := matchToolUses(toolUsesByShortID, reqID)
+		if len(candidates) == 0 {
 			fmt.Fprintf(errOut, "warning: tool ID %s not found\n", reqID)
 			continue
 		}
+		if len(candidates) > 1 {
+			fmt.Fprintf(errOut, "warning: tool ID %s is ambiguous (matches %d tools); disambiguate with a longer/full tool_use_id:\n", reqID, len(candidates))
+			for _, c := range candidates {
+				fmt.Fprintf(errOut, "  %s\n", c.ID)
+			}
+			continue
+		}
+		tu := candidates[0]
 		found++
 
 		fmt.Fprintf(out, "=== [%s#%s] ===\n", tu.Name, reqID)
@@ -394,6 +423,25 @@ func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 		return fmt.Errorf("no matching tool IDs found. Use 'sessions read <session-id>' to see available IDs")
 	}
 	return nil
+}
+
+// matchToolUses resolves a user-requested tool ID to the matching tool uses.
+// A request matching a short ID (last 4 chars) returns every tool use sharing
+// that short ID; the caller treats >1 match as an ambiguous collision. A
+// request longer than a short ID is treated as a full/partial tool_use_id and
+// matched by suffix so users can disambiguate a collision with a longer ID.
+func matchToolUses(byShortID map[string][]session.ToolUse, reqID string) []session.ToolUse {
+	candidates := byShortID[session.ToolShortID(reqID)]
+	if len(reqID) <= 4 {
+		return candidates
+	}
+	var matched []session.ToolUse
+	for _, tu := range candidates {
+		if strings.HasSuffix(tu.ID, reqID) {
+			matched = append(matched, tu)
+		}
+	}
+	return matched
 }
 
 // --- helpers ---
@@ -451,21 +499,26 @@ func resolveSession(fs *flag.FlagSet, store parser.Store) (parser.ResolvedSessio
 }
 
 func formatNumber(n int) string {
-	if n < 0 {
-		return "-" + formatNumber(-n)
+	// strconv.Itoa formats the sign (including math.MinInt, where -n would
+	// overflow back to a negative). Group the digit portion after the sign.
+	s := strconv.Itoa(n)
+	sign := ""
+	digits := s
+	if strings.HasPrefix(s, "-") {
+		sign = "-"
+		digits = s[1:]
 	}
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
+	if len(digits) <= 3 {
 		return s
 	}
 	var result []byte
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
+	for i, c := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
 			result = append(result, ',')
 		}
 		result = append(result, byte(c))
 	}
-	return string(result)
+	return sign + string(result)
 }
 
 func sampleCount(requested int, total int) int {

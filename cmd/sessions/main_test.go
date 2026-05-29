@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -106,6 +108,27 @@ func TestFormatNumber(t *testing.T) {
 		if got := formatNumber(tt.input); got != tt.want {
 			t.Fatalf("formatNumber(%d) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// Regression: the old formatNumber negated negatives via -n, which overflows
+// for math.MinInt (-MinInt == MinInt) and recursed forever. It must terminate
+// and group the digits without panicking. Expected value is hand-derived from
+// strconv.Itoa(math.MinInt) with thousands separators inserted.
+func TestFormatNumber_GivenMinInt_ThenGroupsWithoutOverflow(t *testing.T) {
+	digits := strconv.Itoa(math.MinInt)[1:] // strip leading '-'
+	var sb strings.Builder
+	sb.WriteByte('-')
+	for i, c := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteRune(c)
+	}
+	want := sb.String()
+
+	if got := formatNumber(math.MinInt); got != want {
+		t.Fatalf("formatNumber(math.MinInt) = %q, want %q", got, want)
 	}
 }
 
@@ -281,10 +304,9 @@ func TestRunAudit_WhenSamplesIsNegative_ThenShowsZeroSamplesWithoutPanic(t *test
 }
 
 func TestRunExpand_GivenExistingToolID_WhenExpanded_ThenShowsFullInputAndResult(t *testing.T) {
-	root, sid := writeCLIFixture(t)
-	// writeCLIFixture has no tool_use events, so create a fixture with one.
-	root = t.TempDir()
-	sid = "12345678-1234-1234-1234-123456789abc"
+	// writeCLIFixture has no tool_use events, so build a fixture with one inline.
+	root := t.TempDir()
+	sid := "12345678-1234-1234-1234-123456789abc"
 	projectDir := filepath.Join(root, ".claude", "projects", "proj")
 	metaDir := filepath.Join(root, ".claude", "usage-data", "session-meta")
 	_ = os.MkdirAll(projectDir, 0o755)
@@ -319,6 +341,107 @@ func TestRunExpand_GivenExistingToolID_WhenExpanded_ThenShowsFullInputAndResult(
 	}
 	if !strings.Contains(got, "hello") {
 		t.Fatalf("expand output missing result text\ngot:\n%s", got)
+	}
+}
+
+// Regression: short IDs are only the last 4 chars of tool_use_id, so two
+// distinct tools can share one short ID. The old code keyed a map by short ID
+// and silently overwrote, so expand would return whichever tool appeared last
+// in the transcript — confidently wrong data with no warning. expand must
+// instead detect the collision, refuse to guess, and list the full IDs so the
+// user can disambiguate.
+func TestRunExpand_GivenShortIDCollision_WhenExpanded_ThenWarnsAndDoesNotGuess(t *testing.T) {
+	root := t.TempDir()
+	sid := "12345678-1234-1234-1234-123456789abc"
+	projectDir := filepath.Join(root, ".claude", "projects", "proj")
+	metaDir := filepath.Join(root, ".claude", "usage-data", "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+
+	// Two tools whose full IDs differ but whose last 4 chars both equal "uCVa".
+	firstID := "toolu_01AAAAAAAAAAAAAAuCVa"
+	secondID := "toolu_01BBBBBBBBBBBBBBuCVa"
+	transcript := strings.Join([]string{
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"` + firstID + `","input":{"command":"echo first"}}]}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","id":"` + secondID + `","input":{"command":"echo second"}}]}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: metaDir,
+	}
+	err := runExpand([]string{sid, "uCVa"}, &stdout, &stderr, store)
+
+	// The only requested ID is ambiguous, so nothing was expanded -> error.
+	if err == nil {
+		t.Fatal("runExpand returned nil error, want collision to yield no matches")
+	}
+	// Must not silently emit either tool's body as if it were the answer.
+	if strings.Contains(stdout.String(), "echo first") || strings.Contains(stdout.String(), "echo second") {
+		t.Fatalf("expand emitted a guessed tool body on collision:\n%s", stdout.String())
+	}
+	// Must warn about ambiguity and list BOTH full IDs for disambiguation.
+	gotErr := stderr.String()
+	if !strings.Contains(gotErr, "ambiguous") {
+		t.Fatalf("stderr missing ambiguity warning:\n%s", gotErr)
+	}
+	if !strings.Contains(gotErr, firstID) || !strings.Contains(gotErr, secondID) {
+		t.Fatalf("stderr did not list both colliding full IDs:\n%s", gotErr)
+	}
+}
+
+// A user can disambiguate a colliding short ID by passing the full tool_use_id.
+func TestRunExpand_GivenFullIDOnCollision_WhenExpanded_ThenResolvesUnambiguously(t *testing.T) {
+	root := t.TempDir()
+	sid := "12345678-1234-1234-1234-123456789abc"
+	projectDir := filepath.Join(root, ".claude", "projects", "proj")
+	metaDir := filepath.Join(root, ".claude", "usage-data", "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+
+	firstID := "toolu_01AAAAAAAAAAAAAAuCVa"
+	secondID := "toolu_01BBBBBBBBBBBBBBuCVa"
+	transcript := strings.Join([]string{
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"` + firstID + `","input":{"command":"echo first"}}]}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","id":"` + secondID + `","input":{"command":"echo second"}}]}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: metaDir,
+	}
+	if err := runExpand([]string{sid, secondID}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runExpand returned error: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "echo second") {
+		t.Fatalf("full ID did not resolve to the intended tool:\n%s", got)
+	}
+	if strings.Contains(got, "echo first") {
+		t.Fatalf("full ID resolved to the wrong tool:\n%s", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty when full ID is unambiguous", stderr.String())
 	}
 }
 
