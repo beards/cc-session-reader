@@ -456,6 +456,47 @@ func TestParseLine_PlainUserMessageIsUnaffected(t *testing.T) {
 	}
 }
 
+// TestParseLine_EmbeddedCommandTagMidMessageIsNotClassified guards the bug
+// where classification keyed off extractBetween (a full-string scan) instead of
+// a leading-tag check: a genuine user message that pastes a command tag pair in
+// its *middle* (e.g. quoting a transcript or log) was misclassified as a command
+// invocation, collapsing the whole message to a "[/foo]" / "[!cmd]" marker and
+// silently discarding the surrounding real text. Real invocation entries always
+// open with the tag, so a mid-text tag must be treated as ordinary content:
+// CommandMarker empty, IsCommandNoise false, original text preserved verbatim.
+func TestParseLine_EmbeddedCommandTagMidMessageIsNotClassified(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "embedded command-name tag pair",
+			content: "here is a transcript i want to discuss:\n<command-name>/foo</command-name>\nwhat does it do?",
+		},
+		{
+			name:    "embedded bash-input tag pair",
+			content: "the log showed <bash-input>rm -rf /tmp/x</bash-input> which scared me",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event := parseLine(t, userEntry(t, tc.content))
+			if event.Kind != session.EventUserMessage || event.User == nil {
+				t.Fatalf("kind = %s, user = %#v, want plain user message", event.Kind, event.User)
+			}
+			if event.User.CommandMarker != "" {
+				t.Fatalf("mid-text tag misclassified as command: CommandMarker = %q", event.User.CommandMarker)
+			}
+			if event.User.IsCommandNoise {
+				t.Fatalf("mid-text tag misclassified as command noise: %#v", event.User)
+			}
+			if event.User.Text != tc.content {
+				t.Fatalf("real text not preserved: got %q, want verbatim %q", event.User.Text, tc.content)
+			}
+		})
+	}
+}
+
 func parseLine(t *testing.T, line string) session.Event {
 	t.Helper()
 	event, ok, err := ParseLine([]byte(line))

@@ -46,14 +46,24 @@ func classifyCommandUserMessage(text string) *session.UserMessage {
 	}
 
 	// Slash-command invocation: extract "/context" -> marker "[/context]".
-	if name := extractBetween(trimmed, tagCommandNameOpen, tagCommandNameClose); name != "" {
-		return &session.UserMessage{CommandMarker: "[" + strings.TrimSpace(name) + "]"}
+	// The HasPrefix gate mirrors the caveat/stdout branches: a real invocation
+	// entry always opens with the tag. Gating first (a) skips the full-string
+	// scan extractBetween does on every ordinary message, and (b) prevents a
+	// genuine message that embeds "<command-name>...</command-name>" mid-text
+	// (e.g. a pasted log) from being misclassified as a command and silently
+	// stripped to a marker.
+	if strings.HasPrefix(trimmed, tagCommandNameOpen) {
+		if name := extractBetween(trimmed, tagCommandNameOpen, tagCommandNameClose); name != "" {
+			return &session.UserMessage{CommandMarker: "[" + strings.TrimSpace(name) + "]"}
+		}
 	}
 
 	// Bang-command invocation: extract the command -> marker "[!CMD]".
-	if cmd := extractBetween(trimmed, tagBashInputOpen, tagBashInputClose); strings.TrimSpace(cmd) != "" {
-		oneLine := collapseWhitespace(cmd)
-		return &session.UserMessage{CommandMarker: "[!" + session.Truncate(oneLine, bangCommandMarkerMaxRunes) + "]"}
+	if strings.HasPrefix(trimmed, tagBashInputOpen) {
+		if cmd := extractBetween(trimmed, tagBashInputOpen, tagBashInputClose); strings.TrimSpace(cmd) != "" {
+			oneLine := collapseWhitespace(cmd)
+			return &session.UserMessage{CommandMarker: "[!" + session.Truncate(oneLine, bangCommandMarkerMaxRunes) + "]"}
+		}
 	}
 
 	// Command output (slash stdout, bash stdout/stderr): droppable body,
@@ -67,15 +77,15 @@ func classifyCommandUserMessage(text string) *session.UserMessage {
 	return nil
 }
 
-// extractBetween returns the substring between the first open and the next
-// close tag, or "" if either tag is absent.
-func extractBetween(s, open, close string) string {
-	start := strings.Index(s, open)
+// extractBetween returns the substring between the first openTag and the next
+// closeTag, or "" if either tag is absent.
+func extractBetween(s, openTag, closeTag string) string {
+	start := strings.Index(s, openTag)
 	if start < 0 {
 		return ""
 	}
-	start += len(open)
-	end := strings.Index(s[start:], close)
+	start += len(openTag)
+	end := strings.Index(s[start:], closeTag)
 	if end < 0 {
 		return ""
 	}

@@ -771,6 +771,99 @@ func TestRunExpand_GivenNoArgs_WhenCalled_ThenReturnsUsageError(t *testing.T) {
 	}
 }
 
+// writeVerboseCLIFixture builds a session whose transcript carries the two
+// payloads the verbose flags gate: an assistant thinking block and a slash
+// command invocation (which surfaces as a "[/qa]" marker, plus its stdout as
+// droppable command noise). Returns root and session id for runRead/runContext.
+func writeVerboseCLIFixture(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	sid := "12345678-1234-1234-1234-123456789abc"
+	projectDir := filepath.Join(root, ".claude", "projects", "proj")
+	metaDir := filepath.Join(root, ".claude", "usage-data", "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+	transcript := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"<command-name>/qa</command-name>\n<command-message>qa</command-message>\n<command-args></command-args>"}}`,
+		`{"type":"user","timestamp":"2026-05-28T00:00:01Z","message":{"role":"user","content":"<local-command-stdout>QA_STDOUT_PAYLOAD</local-command-stdout>"}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:02Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"SECRET_THINKING_PAYLOAD"},{"type":"text","text":"done"}]}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+	return root, sid
+}
+
+// The verbose flags are wired flag-string -> *flag.Bool -> FormatOptions inside
+// runRead/runContext. The formatter-level tests build FormatOptions directly and
+// thus skip that wiring: if a flag name were mistyped or a FormatOptions field
+// left unassigned, no formatter test would catch it. These cases drive the real
+// flag parser through runRead/runContext and assert each gated payload is hidden
+// by default and revealed only when its flag string is passed. A mutation that
+// drops the VerboseThinking or VerboseCommands assignment in runRead/runContext
+// turns the corresponding "with flag" case red.
+func TestRunReadContext_VerboseFlagWiring_GatesPayloadBehindFlagString(t *testing.T) {
+	const (
+		thinkingPayload = "SECRET_THINKING_PAYLOAD"
+		commandPayload  = "QA_STDOUT_PAYLOAD"
+	)
+	commands := []struct {
+		name string
+		run  func(args []string, out, errOut *bytes.Buffer, store parser.Store) error
+	}{
+		{
+			name: "read",
+			run:  func(a []string, o, e *bytes.Buffer, s parser.Store) error { return runRead(a, o, e, s) },
+		},
+		{
+			name: "context",
+			run:  func(a []string, o, e *bytes.Buffer, s parser.Store) error { return runContext(a, o, e, s) },
+		},
+	}
+	cases := []struct {
+		name    string
+		flag    string
+		payload string
+	}{
+		{name: "verbose-thinking reveals thinking", flag: "-verbose-thinking", payload: thinkingPayload},
+		{name: "verbose-commands reveals command output", flag: "-verbose-commands", payload: commandPayload},
+	}
+
+	for _, cmd := range commands {
+		for _, tc := range cases {
+			t.Run(cmd.name+"/"+tc.name, func(t *testing.T) {
+				root, sid := writeVerboseCLIFixture(t)
+				store := parser.Store{
+					ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+					SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+				}
+
+				var noFlagOut, noFlagErr bytes.Buffer
+				if err := cmd.run([]string{sid}, &noFlagOut, &noFlagErr, store); err != nil {
+					t.Fatalf("%s without flag returned error: %v", cmd.name, err)
+				}
+				if strings.Contains(noFlagOut.String(), tc.payload) {
+					t.Fatalf("%s leaked %q without %s:\n%s", cmd.name, tc.payload, tc.flag, noFlagOut.String())
+				}
+
+				var withFlagOut, withFlagErr bytes.Buffer
+				if err := cmd.run([]string{sid, tc.flag}, &withFlagOut, &withFlagErr, store); err != nil {
+					t.Fatalf("%s with %s returned error: %v", cmd.name, tc.flag, err)
+				}
+				if !strings.Contains(withFlagOut.String(), tc.payload) {
+					t.Fatalf("%s did not reveal %q with %s:\n%s", cmd.name, tc.payload, tc.flag, withFlagOut.String())
+				}
+			})
+		}
+	}
+}
+
 func writeCLIFixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()

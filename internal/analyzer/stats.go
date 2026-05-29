@@ -43,7 +43,17 @@ func ComputeStats(events []session.Event) StatsResult {
 			if event.User == nil {
 				continue
 			}
-			// Command invocation: the short marker is kept content.
+			// Command invocation: the short marker is kept content. Deliberate
+			// undercount — the marker counts identically toward raw and filtered,
+			// so an invocation contributes zero reduction here. The original
+			// invocation wrapper (<command-name>...<command-args>) was already
+			// dropped at parse time and never reaches stats, so its ~100 chars of
+			// savings are not reflected in the reduction. We accept this: the
+			// wrapper is tiny, and the bulk command savings (multi-KB stdout) are
+			// correctly captured via the IsCommandNoise branch below, which counts
+			// toward raw but not filtered. Surfacing the wrapper would mean
+			// re-plumbing the dropped text through the parser for a rounding-error
+			// gain — not worth the coupling.
 			if event.User.CommandMarker != "" {
 				categories["user_text"] += utf8.RuneCountInString(event.User.CommandMarker)
 				rawParts = append(rawParts, event.User.CommandMarker)

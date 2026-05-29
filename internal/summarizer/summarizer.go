@@ -93,13 +93,13 @@ func SummarizeToolUse(name string, inp session.ToolInput) string {
 		if !hasQuestions {
 			return "[AskUserQuestion]"
 		}
-		qsList, isList := qs.([]interface{})
+		qsList, isList := qs.([]any)
 		if !isList || len(qsList) == 0 {
 			return "[AskUserQuestion]"
 		}
 		var lines []string
 		for i, q := range qsList {
-			qMap, isMap := q.(map[string]interface{})
+			qMap, isMap := q.(map[string]any)
 			if !isMap {
 				continue
 			}
