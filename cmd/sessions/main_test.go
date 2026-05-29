@@ -9,7 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tokens"
 )
 
 func TestSampleCount(t *testing.T) {
@@ -265,6 +269,189 @@ func TestRunStats_WhenNoTokens_ThenWritesCharacterBreakdown(t *testing.T) {
 	if !strings.Contains(got, "Session: 12345678") || !strings.Contains(got, "=== Breakdown ===") {
 		t.Fatalf("stdout missing stats output:\n%s", got)
 	}
+}
+
+// When the Anthropic API is unreachable (no API key), the two concurrent
+// CountTokensAPI calls both fail and runStats must fall back to the local
+// heuristic estimate. This guards the fallback branch — the only token path
+// exercised by the existing suite uses --no-tokens, which skips it entirely.
+// Offline and deterministic: clearing ANTHROPIC_API_KEY makes both calls error.
+func TestRunStats_WhenTokenAPIUnavailable_ThenFallsBackToEstimate(t *testing.T) {
+	// Fixture has a tool_use whose raw input/result is CUT from the filtered
+	// stream, so RawText strictly exceeds FilteredText. This makes the raw >
+	// filtered invariant non-trivial: a SUT mutation that swaps the two streams
+	// turns the assertion red (which it would not with an empty-tool fixture
+	// where the streams are equal).
+	root := t.TempDir()
+	sid := "12345678-1234-1234-1234-123456789abc"
+	projectDir := filepath.Join(root, ".claude", "projects", "proj")
+	metaDir := filepath.Join(root, ".claude", "usage-data", "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+	transcript := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"echo this raw input is cut from the filtered stream"}}]}}`,
+		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"and this raw result is also cut from the filtered stream"}]}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+	store := parser.Store{ProjectsDir: filepath.Join(root, ".claude", "projects"), SessionMetaDir: metaDir}
+
+	// Empty key => CountTokensAPI returns an error before any network call,
+	// so both goroutines fail and runStats takes the estimate branch.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	var stdout, stderr bytes.Buffer
+	// No --no-tokens: we want the token-counting path to actually run.
+	if err := runStats([]string{sid}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runStats returned error: %v", err)
+	}
+	got := stdout.String()
+
+	// Proves we took the fallback branch, not the API branch nor --no-tokens.
+	if !strings.Contains(got, "=== Tokens (estimated) ===") {
+		t.Fatalf("stdout missing estimated-tokens header:\n%s", got)
+	}
+	if strings.Contains(got, "=== Tokens (Anthropic API) ===") {
+		t.Fatalf("stdout unexpectedly took the API branch:\n%s", got)
+	}
+	// Both estimates print with the '~' approximate marker.
+	if strings.Count(got, "~") < 2 {
+		t.Fatalf("stdout missing '~' markers on raw and filtered estimates:\n%s", got)
+	}
+
+	// Re-derive both estimates from the analyzer output (the same source
+	// runStats uses) rather than transcribing runStats' printed numbers. The
+	// fixture cuts real tool content, so RawText differs from FilteredText and
+	// the two estimates come out different — which is what lets the line-routing
+	// assertions below distinguish a stream swap.
+	//
+	// Note: we deliberately do NOT assert raw >= filtered. EstimateTokens is not
+	// monotonic with content size (filtering replaces raw tool JSON with a
+	// human-readable summary that can be longer for short inputs), so any such
+	// ordering would be a false invariant rather than a real guarantee.
+	result := analyzer.ComputeStats(mustReadAll(t, filepath.Join(projectDir, sid+".jsonl")))
+	rawEst := tokens.EstimateTokens(result.RawText)
+	filtEst := tokens.EstimateTokens(result.FilteredText)
+	if rawEst == filtEst {
+		t.Fatalf("fixture too weak: raw and filtered estimates both %d, a stream swap would be undetectable", rawEst)
+	}
+	// The raw estimate must land on the "Raw:" line and the filtered estimate on
+	// the "Filtered:" line. A SUT mutation that swaps the two streams moves each
+	// number onto the wrong labelled line and turns these red.
+	if !strings.Contains(got, "Raw:      "+pad10(formatNumber(rawEst))+" ~") {
+		t.Fatalf("stdout missing raw estimate %s on Raw line:\n%s", formatNumber(rawEst), got)
+	}
+	if !strings.Contains(got, "Filtered: "+pad10(formatNumber(filtEst))+" ~") {
+		t.Fatalf("stdout missing filtered estimate %s on Filtered line:\n%s", formatNumber(filtEst), got)
+	}
+}
+
+// pad10 right-aligns s in a 10-wide field, matching runStats' "%10s" format,
+// so assertions can pin a value to a specific labelled line.
+func pad10(s string) string {
+	if len(s) >= 10 {
+		return s
+	}
+	return strings.Repeat(" ", 10-len(s)) + s
+}
+
+// When both concurrent token-count calls succeed, runStats prints the
+// Anthropic-API block (not the estimate block). The package-level countTokensFn
+// seam lets us stub a deterministic success offline. Returning distinct raw/
+// filtered counts proves each result is routed to its own line rather than one
+// value being printed twice.
+func TestRunStats_WhenTokenAPISucceeds_ThenPrintsAPITokenCounts(t *testing.T) {
+	// A tool_use carries raw input/result that is CUT from the filtered stream,
+	// so RawText and FilteredText genuinely differ — letting the stub route a
+	// distinct count to each line and proving they aren't conflated.
+	root := t.TempDir()
+	sid := "12345678-1234-1234-1234-123456789abc"
+	projectDir := filepath.Join(root, ".claude", "projects", "proj")
+	metaDir := filepath.Join(root, ".claude", "usage-data", "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+	transcript := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"echo this raw input is cut from filtered"}}]}}`,
+		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"and this raw result is also cut"}]}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+	store := parser.Store{ProjectsDir: filepath.Join(root, ".claude", "projects"), SessionMetaDir: metaDir}
+
+	result := analyzer.ComputeStats(mustReadAll(t, filepath.Join(projectDir, sid+".jsonl")))
+	if result.RawText == result.FilteredText {
+		t.Fatalf("fixture invalid: RawText and FilteredText are identical, cannot distinguish lines")
+	}
+
+	const (
+		rawCount  = 1234
+		filtCount = 567
+	)
+	original := countTokensFn
+	t.Cleanup(func() { countTokensFn = original })
+	// Route the larger count to the raw stream, the smaller to the filtered
+	// stream. A mutation that fed both lines the same text would print one
+	// value twice and drop the other.
+	countTokensFn = func(text string) (int, error) {
+		if text == result.RawText {
+			return rawCount, nil
+		}
+		return filtCount, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := runStats([]string{sid}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runStats returned error: %v", err)
+	}
+	got := stdout.String()
+
+	if !strings.Contains(got, "=== Tokens (Anthropic API) ===") {
+		t.Fatalf("stdout missing API-tokens header:\n%s", got)
+	}
+	if strings.Contains(got, "=== Tokens (estimated) ===") {
+		t.Fatalf("stdout unexpectedly took the estimate branch:\n%s", got)
+	}
+	if strings.Contains(got, "~") {
+		t.Fatalf("API branch should not print '~' approximate markers:\n%s", got)
+	}
+	// Each count must land on its correctly-labelled line. Pinning the value to
+	// the line (not just "appears somewhere") is what catches a SUT mutation
+	// that swaps which stream each goroutine counts.
+	if !strings.Contains(got, "Raw:      "+pad10(formatNumber(rawCount))+"\n") {
+		t.Fatalf("stdout missing raw API count %d on Raw line:\n%s", rawCount, got)
+	}
+	if !strings.Contains(got, "Filtered: "+pad10(formatNumber(filtCount))+"\n") {
+		t.Fatalf("stdout missing filtered API count %d on Filtered line:\n%s", filtCount, got)
+	}
+	// Saved = raw - filtered must also be printed (guards the saved math).
+	if !strings.Contains(got, "Saved:    "+pad10(formatNumber(rawCount-filtCount))) {
+		t.Fatalf("stdout missing saved count %d on Saved line:\n%s", rawCount-filtCount, got)
+	}
+}
+
+func mustReadAll(t *testing.T, path string) []session.Event {
+	t.Helper()
+	events, err := claudecodec.ReadAll(path)
+	if err != nil {
+		t.Fatalf("ReadAll(%s): %v", path, err)
+	}
+	return events
 }
 
 func TestRunAudit_WhenSamplesIsNegative_ThenShowsZeroSamplesWithoutPanic(t *testing.T) {

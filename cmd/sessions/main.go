@@ -21,6 +21,11 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tokens"
 )
 
+// countTokensFn is the token-counting backend used by runStats. It is a
+// package-level seam so tests can substitute a deterministic offline stub
+// (success or failure) without making real Anthropic API calls.
+var countTokensFn = tokens.CountTokensAPI
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -265,11 +270,11 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		rawAPI, errRaw = tokens.CountTokensAPI(result.RawText)
+		rawAPI, errRaw = countTokensFn(result.RawText)
 	}()
 	go func() {
 		defer wg.Done()
-		filtAPI, errFilt = tokens.CountTokensAPI(result.FilteredText)
+		filtAPI, errFilt = countTokensFn(result.FilteredText)
 	}()
 	wg.Wait()
 	if errRaw == nil && errFilt == nil {
