@@ -37,7 +37,7 @@ type userRender struct {
 //   - command noise -> drop by default; show ANSI-stripped body under
 //     -verbose-commands, except caveats which are always dropped
 //   - plain typed message -> show verbatim
-func renderUserMessage(user *session.UserMessage, opts FormatOptions) userRender {
+func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills map[string]bool) userRender {
 	if user == nil {
 		return userRender{}
 	}
@@ -54,6 +54,27 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions) userRender
 		}
 		return userRender{body: body, show: true}
 	}
+
+	// Harness-injected subtypes: strip or compact.
+	if user.IsSystemReminder || user.IsContextUsage {
+		return userRender{}
+	}
+	if user.IsSkillInjection {
+		return userRender{body: session.CompactSkillInjection(user, seenSkills), show: true}
+	}
+	if user.IsTeammateMessage {
+		if body, ok := session.CompactTeammateMessage(user.Text); ok {
+			return userRender{body: body, show: true}
+		}
+		return userRender{body: user.Text, show: true}
+	}
+	if user.IsCommandInjection {
+		if body, ok := session.CompactCommandInjection(user.Text); ok {
+			return userRender{body: body, show: true}
+		}
+		return userRender{body: user.Text, show: true}
+	}
+
 	if strings.TrimSpace(user.Text) == "" {
 		return userRender{}
 	}
@@ -88,6 +109,7 @@ func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines
 // renderReadEvents writes the full formatted timeline to out without any line limits.
 func renderReadEvents(events []session.Event, agentIDs map[string]bool, opts FormatOptions, out io.Writer) error {
 	var pendingTools []pendingTool
+	seenSkills := make(map[string]bool)
 
 	flush := func() {
 		for _, pt := range pendingTools {
@@ -102,7 +124,7 @@ func renderReadEvents(events []session.Event, agentIDs map[string]bool, opts For
 	for _, event := range events {
 		switch event.Kind {
 		case session.EventUserMessage:
-			rendered := renderUserMessage(event.User, opts)
+			rendered := renderUserMessage(event.User, opts, seenSkills)
 			if !rendered.show {
 				continue
 			}
@@ -207,6 +229,7 @@ func FormatContextEvents(events []session.Event, agentIDs map[string]bool, maxLi
 // renderContextEvents writes the full compact context format to out without any line limits.
 func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts FormatOptions, out io.Writer) error {
 	var pendingTools []pendingTool
+	seenSkills := make(map[string]bool)
 
 	flush := func() {
 		for _, pt := range pendingTools {
@@ -221,7 +244,7 @@ func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 	for _, event := range events {
 		switch event.Kind {
 		case session.EventUserMessage:
-			rendered := renderUserMessage(event.User, opts)
+			rendered := renderUserMessage(event.User, opts, seenSkills)
 			if !rendered.show {
 				continue
 			}

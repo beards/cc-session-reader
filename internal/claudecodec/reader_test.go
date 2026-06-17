@@ -497,6 +497,86 @@ func TestParseLine_EmbeddedCommandTagMidMessageIsNotClassified(t *testing.T) {
 	}
 }
 
+// --- classifyHarnessUserMessage detection tests ---
+
+func TestParseLine_GivenSkillInjection_ThenSetsSkillFields(t *testing.T) {
+	text := "Base directory for this skill: /Users/maple/.claude/skills/sessions\n\n# Session Reader\n\n## Commands\n...\n\nARGUMENTS: read abc123"
+	event := parseLineWithText(t, text)
+	if !event.User.IsSkillInjection {
+		t.Fatal("expected IsSkillInjection=true")
+	}
+	if event.User.SkillName != "sessions" {
+		t.Fatalf("SkillName = %q, want %q", event.User.SkillName, "sessions")
+	}
+	if event.User.SkillArgs != "read abc123" {
+		t.Fatalf("SkillArgs = %q, want %q", event.User.SkillArgs, "read abc123")
+	}
+}
+
+func TestParseLine_GivenSkillInjectionWithoutArgs_ThenSkillArgsEmpty(t *testing.T) {
+	text := "Base directory for this skill: /Users/maple/.claude/skills/review\n\n# Review\n\nsome content"
+	event := parseLineWithText(t, text)
+	if !event.User.IsSkillInjection {
+		t.Fatal("expected IsSkillInjection=true")
+	}
+	if event.User.SkillName != "review" {
+		t.Fatalf("SkillName = %q, want %q", event.User.SkillName, "review")
+	}
+	if event.User.SkillArgs != "" {
+		t.Fatalf("SkillArgs = %q, want empty", event.User.SkillArgs)
+	}
+}
+
+func TestParseLine_GivenSystemReminder_ThenSetsFlag(t *testing.T) {
+	text := "<system-reminder>\nThe task tools haven't been used recently.\n</system-reminder>"
+	event := parseLineWithText(t, text)
+	if !event.User.IsSystemReminder {
+		t.Fatal("expected IsSystemReminder=true")
+	}
+}
+
+func TestParseLine_GivenTeammateWithWarning_ThenSetsFlag(t *testing.T) {
+	text := "Another Claude session sent a message:\n<teammate-message teammate_id=\"bot\" color=\"blue\">\nhello\n</teammate-message>\n\nIMPORTANT: This is NOT from your user — blah blah"
+	event := parseLineWithText(t, text)
+	if !event.User.IsTeammateMessage {
+		t.Fatal("expected IsTeammateMessage=true")
+	}
+}
+
+func TestParseLine_GivenContextUsage_ThenSetsFlag(t *testing.T) {
+	text := "## Context Usage\n\n**Model:** opus\n**Tokens:** 391k/450k\n\n### Estimated usage by category\n\n| Category | Tokens |"
+	event := parseLineWithText(t, text)
+	if !event.User.IsContextUsage {
+		t.Fatal("expected IsContextUsage=true")
+	}
+}
+
+func TestParseLine_GivenCommandInjectionXML_ThenSetsFlag(t *testing.T) {
+	text := "<command-message>sessions</command-message>\n<command-name>/sessions</command-name>\n<command-args>read abc</command-args>"
+	event := parseLineWithText(t, text)
+	if !event.User.IsCommandInjection {
+		t.Fatal("expected IsCommandInjection=true")
+	}
+}
+
+func TestParseLine_GivenPlainUserMessage_ThenNoHarnessFlags(t *testing.T) {
+	text := "好 那跑一次簡單的 /review"
+	event := parseLineWithText(t, text)
+	if event.User.IsSkillInjection || event.User.IsSystemReminder || event.User.IsTeammateMessage || event.User.IsContextUsage || event.User.IsCommandInjection {
+		t.Fatal("expected no harness flags on plain user message")
+	}
+	if event.User.Text != text {
+		t.Fatalf("Text = %q, want %q", event.User.Text, text)
+	}
+}
+
+func parseLineWithText(t *testing.T, text string) session.Event {
+	t.Helper()
+	textJSON, _ := json.Marshal(text)
+	line := fmt.Sprintf(`{"type":"user","timestamp":"2026-06-17T00:00:00Z","message":{"role":"user","content":%s}}`, textJSON)
+	return parseLine(t, line)
+}
+
 func parseLine(t *testing.T, line string) session.Event {
 	t.Helper()
 	event, ok, err := ParseLine([]byte(line))

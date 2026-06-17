@@ -77,6 +77,107 @@ func classifyCommandUserMessage(text string) *session.UserMessage {
 	return nil
 }
 
+// Harness-injected content markers used for classifying user messages that are
+// not direct user input.
+const (
+	skillInjectionPrefix = "Base directory for this skill:"
+	systemReminderOpen   = "<system-reminder>"
+	teammateOpen         = "<teammate-message"
+	teammateWarning      = "IMPORTANT: This is NOT from your user"
+	contextUsageHeader   = "## Context Usage"
+	contextUsageMarker   = "Estimated usage by category"
+	commandMessageOpen   = "<command-message>"
+	skillArgsPrefix      = "ARGUMENTS:"
+)
+
+// classifyHarnessUserMessage detects harness-injected user messages that are
+// not direct user input: skill injections, system reminders, teammate messages,
+// context usage blocks, and command injection XML. Returns nil for plain
+// user-typed messages so the caller falls back to normal handling.
+func classifyHarnessUserMessage(text string) *session.UserMessage {
+	trimmed := strings.TrimSpace(text)
+
+	// system-reminder: strip entirely.
+	if strings.HasPrefix(trimmed, systemReminderOpen) {
+		return &session.UserMessage{IsSystemReminder: true}
+	}
+
+	// Skill injection: "Base directory for this skill: /path/to/skill"
+	if strings.HasPrefix(trimmed, skillInjectionPrefix) {
+		name := extractSkillName(trimmed)
+		args := extractSkillArgs(trimmed)
+		return &session.UserMessage{
+			Text:             text,
+			IsSkillInjection: true,
+			SkillName:        name,
+			SkillArgs:        args,
+		}
+	}
+
+	// Teammate message with harness warning.
+	if strings.Contains(trimmed, teammateOpen) && strings.Contains(trimmed, teammateWarning) {
+		return &session.UserMessage{Text: text, IsTeammateMessage: true}
+	}
+	// Teammate message without the full warning (edge case: only the XML).
+	if strings.HasPrefix(trimmed, "Another Claude session sent a message:") && strings.Contains(trimmed, teammateOpen) {
+		return &session.UserMessage{Text: text, IsTeammateMessage: true}
+	}
+
+	// Context usage block (from /context command output).
+	if strings.Contains(trimmed, contextUsageHeader) && strings.Contains(trimmed, contextUsageMarker) {
+		return &session.UserMessage{IsContextUsage: true}
+	}
+
+	// Command injection XML: <command-message>...<command-name>/foo</command-name>
+	// This fires for the XML wrapper message that precedes a skill SKILL.md
+	// injection. Distinct from the <command-name>-prefixed case already handled
+	// by classifyCommandUserMessage (which covers slash-command invocations that
+	// start with the tag).
+	if strings.HasPrefix(trimmed, commandMessageOpen) {
+		return &session.UserMessage{Text: text, IsCommandInjection: true}
+	}
+
+	return nil
+}
+
+func extractSkillName(text string) string {
+	// "Base directory for this skill: /Users/maple/.claude/skills/sessions"
+	// → "sessions"
+	prefix := skillInjectionPrefix
+	idx := strings.Index(text, prefix)
+	if idx < 0 {
+		return "unknown"
+	}
+	pathStart := idx + len(prefix)
+	rest := strings.TrimSpace(text[pathStart:])
+	// Path ends at newline.
+	if nl := strings.Index(rest, "\n"); nl >= 0 {
+		rest = rest[:nl]
+	}
+	rest = strings.TrimRight(rest, "/")
+	if slash := strings.LastIndex(rest, "/"); slash >= 0 {
+		return rest[slash+1:]
+	}
+	return rest
+}
+
+func extractSkillArgs(text string) string {
+	idx := strings.Index(text, skillArgsPrefix)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(text[idx+len(skillArgsPrefix):])
+	// Take only the first line of args for the compact form.
+	if nl := strings.Index(rest, "\n"); nl >= 0 {
+		firstLine := rest[:nl]
+		if len(rest) > nl+1 {
+			return session.Truncate(firstLine, 120) + "..."
+		}
+		return session.Truncate(firstLine, 120)
+	}
+	return session.Truncate(rest, 120)
+}
+
 // extractBetween returns the substring between the first openTag and the next
 // closeTag, or "" if either tag is absent.
 func extractBetween(s, openTag, closeTag string) string {

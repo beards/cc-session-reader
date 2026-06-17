@@ -45,6 +45,7 @@ func ComputeStats(events []session.Event) StatsResult {
 		"command_noise":   0,
 	}
 	perTool := map[string]*ToolStats{}
+	seenSkills := map[string]bool{}
 	var lastContextTokens, totalOutputTokens, apiCallCount int
 	var prevUsage *session.Usage
 
@@ -89,6 +90,37 @@ func ComputeStats(events []session.Event) StatsResult {
 			if strings.TrimSpace(event.User.Text) == "" {
 				continue
 			}
+
+			// Harness-injected subtypes: mirror the formatter's compression.
+			if event.User.IsSystemReminder || event.User.IsContextUsage {
+				categories["user_text"] += utf8.RuneCountInString(event.User.Text)
+				rawParts = append(rawParts, event.User.Text)
+				continue
+			}
+			if event.User.IsSkillInjection {
+				categories["user_text"] += utf8.RuneCountInString(event.User.Text)
+				rawParts = append(rawParts, event.User.Text)
+				compact := session.CompactSkillInjection(event.User, seenSkills)
+				filteredParts = append(filteredParts, compact)
+				continue
+			}
+			if event.User.IsTeammateMessage {
+				categories["user_text"] += utf8.RuneCountInString(event.User.Text)
+				rawParts = append(rawParts, event.User.Text)
+				if compacted, ok := session.CompactTeammateMessage(event.User.Text); ok {
+					filteredParts = append(filteredParts, compacted)
+				}
+				continue
+			}
+			if event.User.IsCommandInjection {
+				categories["user_text"] += utf8.RuneCountInString(event.User.Text)
+				rawParts = append(rawParts, event.User.Text)
+				if compacted, ok := session.CompactCommandInjection(event.User.Text); ok {
+					filteredParts = append(filteredParts, compacted)
+				}
+				continue
+			}
+
 			categories["user_text"] += utf8.RuneCountInString(event.User.Text)
 			rawParts = append(rawParts, event.User.Text)
 			if compacted, ok := session.CompactTaskNotification(event.User.Text); ok {
