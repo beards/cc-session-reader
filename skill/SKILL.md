@@ -18,7 +18,7 @@ allowed-tools:
 ```bash
 sessions read <id>
 sessions list -p <project>
-sessions stats <id> -no-tokens
+sessions stats <id>
 ```
 
 在任何工作目錄都能執行，由 Bash 工具呼叫。
@@ -44,7 +44,8 @@ Session ID 支援 prefix match，前 8 碼通常就夠。
 大 session 的 read 輸出可達數千行。一次全倒會超出 Bash stdout buffer，
 被 harness 寫入 persisted-output 檔案，之後只能用 Read 分段載入——等同讀原始 JSONL。
 
-`read` 和 `context` 預設輸出 200 行後截斷，截斷時印出總行數和建議的下一段 offset。
+`read` 和 `context` 預設輸出 200 行後截斷（`-max-lines` 預設 200），
+截斷時印出總行數和建議的下一段 offset。
 
 讀取流程：
 1. `sessions read <id>` → 前 200 行 + 總行數提示
@@ -80,6 +81,13 @@ Session ID 支援 prefix match，前 8 碼通常就夠。
 |------|------|
 | `-no-tokens` | 跳過 token 計算（需要 API key），只看字元分佈 |
 
+### Usage 選項
+
+| Flag | 說明 |
+|------|------|
+| `-n N` | 限制輸出筆數 |
+| `-cmd X` | 篩選特定子命令（如 `-cmd read`） |
+
 ## 過濾邏輯
 
 CLI 的價值在於大幅縮減 session 體積，讓 AI 能在 context 內讀完整對話。
@@ -87,3 +95,42 @@ CLI 的價值在於大幅縮減 session 體積，讓 AI 能在 context 內讀完
 保留：對話文字、tool call 一行摘要。
 過濾：tool result 原始輸出、檔案內容、tool input JSON、system/noise messages。
 壓縮比視 session 組成而定：tool I/O 為主 80-88%，純對話為主 40-65%。
+
+### Filtered output 的 5 種壓縮
+
+CLI 對特定 injection 類型做額外壓縮，減少 context 噪音：
+
+| 類型 | 壓縮結果 |
+|------|----------|
+| Skill injections | `[skill: name] args`，重複出現時標注 `(repeat)` |
+| Teammate warnings | `[teammate: id] content`，剝除 XML boilerplate |
+| Command injections | `/command args`，剝除 XML wrapper |
+| Context Usage blocks | 整段移除 |
+| system-reminder | 整段移除 |
+
+## Stats 輸出說明
+
+`sessions stats <id>` 顯示的資訊包含：
+
+- **Last turn context**：從 JSONL 中 API usage 欄位讀取的實際 token 數（最後一輪）
+- **Token savings**：CLI filtered 輸出 vs 原始 context 的 token 節省對比
+- **Per-tool breakdown**：每個工具的呼叫次數、input chars、result chars
+
+精確 token 計數需要在 config 設定 `anthropic_api_key_file`；
+未設定時自動以字元數估算。
+
+## Config 設定
+
+`~/.claude/skills/sessions/config.json` 支援以下欄位：
+
+```json
+{
+  "anthropic_api_key_file": "/path/to/api-key-file",
+  "integration_test_session": "<session-id>"
+}
+```
+
+| 欄位 | 用途 |
+|------|------|
+| `anthropic_api_key_file` | 指向含 ANTHROPIC_API_KEY 的檔案路徑，啟用精確 token 計算 |
+| `integration_test_session` | 本地 integration test 使用的 session ID |
