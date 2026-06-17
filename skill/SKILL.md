@@ -11,7 +11,21 @@ allowed-tools:
 
 # Session Reader
 
+## 呼叫方式
+
+`sessions` 是安裝在 PATH 中的 compiled binary，像 `git` 或 `curl` 一樣直接呼叫：
+
+```bash
+sessions read <id>
+sessions list -p <project>
+sessions stats <id> -no-tokens
+```
+
+在任何工作目錄都能執行，由 Bash 工具呼叫。
+
 ## 選擇子命令
+
+每個子命令對應一個使用意圖，根據使用者想做的事選擇：
 
 | 意圖 | 命令 |
 |------|------|
@@ -50,7 +64,8 @@ Session ID 支援 prefix match，前 8 碼通常就夠。
 
 ### 詳細模式（read/context）
 
-選擇性展開被壓縮的內容。只在使用者明確需要該層資訊時開啟。
+預設輸出壓縮了 tool I/O 和 thinking，只保留一行摘要。
+當使用者需要檢視被壓縮的原始內容時，用對應的 verbose flag 展開：
 
 | Flag | 展開內容 |
 |------|----------|
@@ -63,9 +78,12 @@ Session ID 支援 prefix match，前 8 碼通常就夠。
 
 | Flag | 說明 |
 |------|------|
-| `-no-tokens` | 跳過 token 計算，只看字元分佈 |
+| `-no-tokens` | 跳過 token 計算（需要 API key），只看字元分佈 |
 
 ## 過濾邏輯
 
-保留對話文字和 tool call 一行摘要。過濾 tool result 原始輸出、檔案內容、tool input JSON、system/noise messages。
+CLI 的價值在於大幅縮減 session 體積，讓 AI 能在 context 內讀完整對話。
+
+保留：對話文字、tool call 一行摘要。
+過濾：tool result 原始輸出、檔案內容、tool input JSON、system/noise messages。
 壓縮比視 session 組成而定：tool I/O 為主 80-88%，純對話為主 40-65%。
