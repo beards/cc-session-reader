@@ -8,8 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -229,139 +227,53 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 
 	result := analyzer.ComputeStats(events)
 
-	shortID := session.ShortID(resolved.ID, 8)
 	info, _ := os.Stat(resolved.Path)
 	fileSize := float64(0)
 	if info != nil {
 		fileSize = float64(info.Size()) / 1024.0
 	}
 
-	fmt.Fprintf(out, "Session: %s\n", shortID)
-	fmt.Fprintf(out, "Transcript: %.1fKB\n\n", fileSize)
-	fmt.Fprintln(out, "=== Characters ===")
-	fmt.Fprintf(out, "  Raw:      %10s\n", formatNumber(result.RawChars))
-	fmt.Fprintf(out, "  Filtered: %10s\n", formatNumber(result.FilteredChars))
-	if result.RawChars > 0 {
-		saved := result.RawChars - result.FilteredChars
-		pct := float64(saved) * 100.0 / float64(result.RawChars)
-		fmt.Fprintf(out, "  Saved:    %10s (%.1f%%)\n", formatNumber(saved), pct)
+	opts := analyzer.RenderOptions{
+		SessionID:    session.ShortID(resolved.ID, 8),
+		TranscriptKB: fileSize,
+		SkipTokens:   *isNoTokens,
+		HasAPIData:   result.APICallCount > 0,
 	}
 
-	fmt.Fprintln(out, "\n=== Breakdown ===")
-	for _, bl := range []struct{ label, key string }{
-		{"KEPT  user text:        ", "user_text"},
-		{"KEPT  user answers:     ", "user_answers"},
-		{"KEPT  assistant text:   ", "assistant_text"},
-		{"KEPT  tool summaries:   ", "tool_summaries"},
-		{"CUT   tool input (raw): ", "tool_input_raw"},
-		{"CUT   tool result (raw):", "tool_result_raw"},
-		{"CUT   system/noise:     ", "system_noise"},
-		{"CUT   command noise:    ", "command_noise"},
-	} {
-		fmt.Fprintf(out, "  %s %10s\n", bl.label, formatNumber(result.Categories[bl.key]))
-	}
-
-	if len(result.PerTool) > 0 {
-		// Sort tools by total chars (input + result) descending; tie-break alphabetically.
-		type toolEntry struct {
-			name  string
-			stats *analyzer.ToolStats
-		}
-		var entries []toolEntry
-		for name, ts := range result.PerTool {
-			entries = append(entries, toolEntry{name, ts})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			ti := entries[i].stats.InputChars + entries[i].stats.ResultChars
-			tj := entries[j].stats.InputChars + entries[j].stats.ResultChars
-			if ti != tj {
-				return ti > tj
-			}
-			return entries[i].name < entries[j].name
-		})
-
-		fmt.Fprintln(out, "\n=== Per-tool ===")
-		maxNameLen := 0
-		for _, e := range entries {
-			if len(e.name) > maxNameLen {
-				maxNameLen = len(e.name)
-			}
-		}
-		for _, e := range entries {
-			fmt.Fprintf(out, "  %-*s  %5s calls  %10s input  %10s result\n",
-				maxNameLen, e.name,
-				formatNumber(e.stats.CallCount),
-				formatNumber(e.stats.InputChars),
-				formatNumber(e.stats.ResultChars),
+	if !*isNoTokens {
+		if result.APICallCount > 0 {
+			filtAPI, errFilt := countTokensFn(result.FilteredText)
+			opts.FilteredTokens = filtAPI
+			opts.TokenErr = errFilt
+		} else {
+			var (
+				rawAPI, filtAPI int
+				errRaw, errFilt error
+				wg              sync.WaitGroup
 			)
-		}
-	}
-
-	if result.APICallCount > 0 {
-		fmt.Fprintln(out, "\n=== Model Context (from API usage) ===")
-		fmt.Fprintf(out, "  Last turn context:    %10s\n", formatNumber(result.LastContextTokens))
-		fmt.Fprintf(out, "  Total output:         %10s\n", formatNumber(result.TotalOutputTokens))
-		fmt.Fprintf(out, "  API calls:            %10s\n", formatNumber(result.APICallCount))
-	}
-
-	if *isNoTokens {
-		return nil
-	}
-
-	fmt.Fprintln(out)
-	if result.APICallCount > 0 {
-		filtAPI, errFilt := countTokensFn(result.FilteredText)
-		if errFilt == nil {
-			saved := result.LastContextTokens - filtAPI
-			fmt.Fprintln(out, "=== Token Savings ===")
-			fmt.Fprintf(out, "  Original context: %10s\n", formatNumber(result.LastContextTokens))
-			fmt.Fprintf(out, "  CLI filtered:     %10s\n", formatNumber(filtAPI))
-			if result.LastContextTokens > 0 {
-				pct := float64(saved) * 100.0 / float64(result.LastContextTokens)
-				fmt.Fprintf(out, "  Saved:            %10s (%.1f%%)\n", formatNumber(saved), pct)
-			}
-		} else {
-			printConfigHint(errOut)
-		}
-	} else {
-		var (
-			rawAPI, filtAPI int
-			errRaw, errFilt error
-			wg              sync.WaitGroup
-		)
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			rawAPI, errRaw = countTokensFn(result.RawText)
-		}()
-		go func() {
-			defer wg.Done()
-			filtAPI, errFilt = countTokensFn(result.FilteredText)
-		}()
-		wg.Wait()
-		if errRaw == nil && errFilt == nil {
-			saved := rawAPI - filtAPI
-			fmt.Fprintln(out, "=== Tokens (Anthropic API) ===")
-			fmt.Fprintf(out, "  Raw:      %10s\n", formatNumber(rawAPI))
-			fmt.Fprintf(out, "  Filtered: %10s\n", formatNumber(filtAPI))
-			if rawAPI > 0 {
-				pct := float64(saved) * 100.0 / float64(rawAPI)
-				fmt.Fprintf(out, "  Saved:    %10s (%.1f%%)\n", formatNumber(saved), pct)
-			}
-		} else {
-			printConfigHint(errOut)
-			rawEst := tokens.EstimateTokens(result.RawText)
-			filtEst := tokens.EstimateTokens(result.FilteredText)
-			savedEst := rawEst - filtEst
-			fmt.Fprintln(out, "=== Tokens (estimated) ===")
-			fmt.Fprintf(out, "  Raw:      %10s ~\n", formatNumber(rawEst))
-			fmt.Fprintf(out, "  Filtered: %10s ~\n", formatNumber(filtEst))
-			if rawEst > 0 {
-				pct := float64(savedEst) * 100.0 / float64(rawEst)
-				fmt.Fprintf(out, "  Saved:    %10s ~ (%.1f%%)\n", formatNumber(savedEst), pct)
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				rawAPI, errRaw = countTokensFn(result.RawText)
+			}()
+			go func() {
+				defer wg.Done()
+				filtAPI, errFilt = countTokensFn(result.FilteredText)
+			}()
+			wg.Wait()
+			if errRaw == nil && errFilt == nil {
+				opts.RawTokens = rawAPI
+				opts.FilteredTokens = filtAPI
+			} else {
+				opts.RawTokens = tokens.EstimateTokens(result.RawText)
+				opts.FilteredTokens = tokens.EstimateTokens(result.FilteredText)
+				opts.TokenErr = errFilt
+				opts.UseEstimate = true
 			}
 		}
 	}
+
+	analyzer.RenderStats(out, errOut, result, opts)
 	return nil
 }
 
@@ -648,34 +560,6 @@ func resolveSession(fs *flag.FlagSet, store parser.Store) (parser.ResolvedSessio
 		return parser.ResolvedSession{}, fmt.Errorf("transcript not found: %s", resolved.ID)
 	}
 	return resolved, nil
-}
-
-func printConfigHint(w io.Writer) {
-	fmt.Fprintln(w, "hint: to see token counts, create ~/.claude/skills/sessions/config.json:")
-	fmt.Fprintln(w, `  {"anthropic_api_key_file": "~/.config/anthropic/.env"}`)
-}
-
-func formatNumber(n int) string {
-	// strconv.Itoa formats the sign (including math.MinInt, where -n would
-	// overflow back to a negative). Group the digit portion after the sign.
-	s := strconv.Itoa(n)
-	sign := ""
-	digits := s
-	if strings.HasPrefix(s, "-") {
-		sign = "-"
-		digits = s[1:]
-	}
-	if len(digits) <= 3 {
-		return s
-	}
-	var result []byte
-	for i, c := range digits {
-		if i > 0 && (len(digits)-i)%3 == 0 {
-			result = append(result, ',')
-		}
-		result = append(result, byte(c))
-	}
-	return sign + string(result)
 }
 
 func sampleCount(requested int, total int) int {

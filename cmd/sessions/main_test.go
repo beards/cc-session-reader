@@ -113,13 +113,13 @@ func TestFormatNumber(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := formatNumber(tt.input); got != tt.want {
-			t.Fatalf("formatNumber(%d) = %q, want %q", tt.input, got, tt.want)
+		if got := analyzer.FormatNumber(tt.input); got != tt.want {
+			t.Fatalf("FormatNumber(%d) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
 
-// Regression: the old formatNumber negated negatives via -n, which overflows
+// Regression: the old FormatNumber negated negatives via -n, which overflows
 // for math.MinInt (-MinInt == MinInt) and recursed forever. It must terminate
 // and group the digits without panicking. Expected value is hand-derived from
 // strconv.Itoa(math.MinInt) with thousands separators inserted.
@@ -135,8 +135,8 @@ func TestFormatNumber_GivenMinInt_ThenGroupsWithoutOverflow(t *testing.T) {
 	}
 	want := sb.String()
 
-	if got := formatNumber(math.MinInt); got != want {
-		t.Fatalf("formatNumber(math.MinInt) = %q, want %q", got, want)
+	if got := analyzer.FormatNumber(math.MinInt); got != want {
+		t.Fatalf("FormatNumber(math.MinInt) = %q, want %q", got, want)
 	}
 }
 
@@ -471,11 +471,11 @@ func TestRunStats_WhenTokenAPIUnavailable_ThenFallsBackToEstimate(t *testing.T) 
 	// The raw estimate must land on the "Raw:" line and the filtered estimate on
 	// the "Filtered:" line. A SUT mutation that swaps the two streams moves each
 	// number onto the wrong labelled line and turns these red.
-	if !strings.Contains(got, "Raw:      "+pad10(formatNumber(rawEst))+" ~") {
-		t.Fatalf("stdout missing raw estimate %s on Raw line:\n%s", formatNumber(rawEst), got)
+	if !strings.Contains(got, "Raw:      "+pad10(analyzer.FormatNumber(rawEst))+" ~") {
+		t.Fatalf("stdout missing raw estimate %s on Raw line:\n%s", analyzer.FormatNumber(rawEst), got)
 	}
-	if !strings.Contains(got, "Filtered: "+pad10(formatNumber(filtEst))+" ~") {
-		t.Fatalf("stdout missing filtered estimate %s on Filtered line:\n%s", formatNumber(filtEst), got)
+	if !strings.Contains(got, "Filtered: "+pad10(analyzer.FormatNumber(filtEst))+" ~") {
+		t.Fatalf("stdout missing filtered estimate %s on Filtered line:\n%s", analyzer.FormatNumber(filtEst), got)
 	}
 }
 
@@ -558,14 +558,14 @@ func TestRunStats_WhenTokenAPISucceeds_ThenPrintsAPITokenCounts(t *testing.T) {
 	// Each count must land on its correctly-labelled line. Pinning the value to
 	// the line (not just "appears somewhere") is what catches a SUT mutation
 	// that swaps which stream each goroutine counts.
-	if !strings.Contains(got, "Raw:      "+pad10(formatNumber(rawCount))+"\n") {
+	if !strings.Contains(got, "Raw:      "+pad10(analyzer.FormatNumber(rawCount))+"\n") {
 		t.Fatalf("stdout missing raw API count %d on Raw line:\n%s", rawCount, got)
 	}
-	if !strings.Contains(got, "Filtered: "+pad10(formatNumber(filtCount))+"\n") {
+	if !strings.Contains(got, "Filtered: "+pad10(analyzer.FormatNumber(filtCount))+"\n") {
 		t.Fatalf("stdout missing filtered API count %d on Filtered line:\n%s", filtCount, got)
 	}
 	// Saved = raw - filtered must also be printed (guards the saved math).
-	if !strings.Contains(got, "Saved:    "+pad10(formatNumber(rawCount-filtCount))) {
+	if !strings.Contains(got, "Saved:    "+pad10(analyzer.FormatNumber(rawCount-filtCount))) {
 		t.Fatalf("stdout missing saved count %d on Saved line:\n%s", rawCount-filtCount, got)
 	}
 }
