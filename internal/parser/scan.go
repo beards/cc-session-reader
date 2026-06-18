@@ -155,6 +155,17 @@ func (s Store) ListAllSessions() ([]SessionListEntry, []string) {
 		}
 	}
 
+	// --- filter out subagent sessions ---
+	filtered := all[:0]
+	for _, e := range all {
+		if strings.HasPrefix(e.SessionID, "agent-") {
+			continue
+		}
+		e.FirstPrompt = sanitizeFirstPrompt(e.FirstPrompt)
+		filtered = append(filtered, e)
+	}
+	all = filtered
+
 	// --- sort newest first; zero timestamps sort last ---
 	sort.Slice(all, func(i, j int) bool {
 		ti, tj := all[i].StartTimeParsed, all[j].StartTimeParsed
@@ -169,4 +180,12 @@ func (s Store) ListAllSessions() ([]SessionListEntry, []string) {
 	})
 
 	return all, warnings
+}
+
+func sanitizeFirstPrompt(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if idx := strings.Index(s, "<"); idx >= 0 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	return truncateRunes(s, 80)
 }

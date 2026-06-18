@@ -27,6 +27,9 @@ func main() {
 
 	subcommand := os.Args[1]
 	switch subcommand {
+	case "-h", "--help", "help":
+		printUsage()
+		return
 	case "list":
 		cmdList(os.Args[2:], reader)
 	case "read":
