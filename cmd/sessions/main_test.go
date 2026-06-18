@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"math"
 	"os"
@@ -1193,4 +1194,54 @@ func TestRunRead_GivenNegativeOffset_WhenCalled_ThenReturnsValidationError(t *te
 	if !strings.Contains(err.Error(), "-offset") {
 		t.Fatalf("error = %v, want -offset validation message", err)
 	}
+}
+
+// --- Help flag handling ---
+
+func TestRunRead_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runRead([]string{"-h"}, &stdout, &stderr, parser.Store{}, testReader)
+	if err == nil || err.Error() != "flag: help requested" {
+		t.Fatalf("runRead(-h) = %v, want flag.ErrHelp", err)
+	}
+	if !strings.Contains(stderr.String(), "max-lines") {
+		t.Fatalf("stderr should contain flag descriptions, got: %q", stderr.String())
+	}
+}
+
+func TestRunStats_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runStats([]string{"-h"}, &stdout, &stderr, parser.Store{}, testReader)
+	if err == nil || err.Error() != "flag: help requested" {
+		t.Fatalf("runStats(-h) = %v, want flag.ErrHelp", err)
+	}
+	if !strings.Contains(stderr.String(), "no-tokens") {
+		t.Fatalf("stderr should contain flag descriptions, got: %q", stderr.String())
+	}
+}
+
+func TestRunList_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runList([]string{"-h"}, &stdout, &stderr, parser.Store{})
+	if err == nil || err.Error() != "flag: help requested" {
+		t.Fatalf("runList(-h) = %v, want flag.ErrHelp", err)
+	}
+}
+
+func TestRunInject_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runInject([]string{"-h"}, &stdout, &stderr, parser.Store{}, testReader)
+	if err == nil || err.Error() != "flag: help requested" {
+		t.Fatalf("runInject(-h) = %v, want flag.ErrHelp", err)
+	}
+}
+
+func TestExitOnError_GivenNil_ThenNoOp(t *testing.T) {
+	// Should not panic or call os.Exit
+	exitOnError(nil)
+}
+
+func TestExitOnError_GivenErrHelp_ThenNoOp(t *testing.T) {
+	// Should not panic or call os.Exit
+	exitOnError(flag.ErrHelp)
 }
