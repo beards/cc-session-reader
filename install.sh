@@ -182,6 +182,12 @@ print_next_steps() {
   echo "  cc-session read <id>     # 讀取對話內容"
   echo "  /cc-session              # 在 Claude Code 中使用 (需已安裝 Skill)"
   echo ""
+  echo "── Token counting (optional) ──────────────────────────────────────"
+  echo "  For precise token counts in 'cc-session stats', create:"
+  echo "  $SKILL_DIR/config.json"
+  echo ""
+  echo '  {"anthropic_api_key_file": "<path-to-your-api-key-file>"}'
+  echo ""
 }
 
 main() {
