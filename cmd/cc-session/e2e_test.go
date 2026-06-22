@@ -5,13 +5,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
+func binaryName() string {
+	if runtime.GOOS == "windows" {
+		return "cc-session.exe"
+	}
+	return "cc-session"
+}
+
 func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testing.T) {
 	root := t.TempDir()
-	bin := filepath.Join(root, "cc-session")
+	bin := filepath.Join(root, binaryName())
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {
@@ -112,7 +120,7 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 // non-zero, this turns red.
 func TestCLI_WhenSubcommandFails_ThenPrintsErrorPrefixAndExitsNonZero(t *testing.T) {
 	root := t.TempDir()
-	bin := filepath.Join(root, "cc-session")
+	bin := filepath.Join(root, binaryName())
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {

@@ -3,6 +3,7 @@ package analyzer
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -54,7 +55,7 @@ func TestPrintConfigHint_GivenWriter_WhenCalled_ThenOutputsAPIKeyHint(t *testing
 	PrintConfigHint(&buf)
 	out := buf.String()
 
-	if !strings.Contains(out, ".claude/skills/cc-session/config.json") {
+	if !strings.Contains(out, filepath.Join(".claude", "skills", "cc-session", "config.json")) {
 		t.Errorf("PrintConfigHint output missing config path, got: %q", out)
 	}
 	if !strings.Contains(out, "anthropic_api_key_file") {
