@@ -31,6 +31,11 @@ type pricing struct {
 var pricingOpus = pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
 var pricingSonnet = pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}
 
+const (
+	tokenCountModelOpus   = "claude-opus-4-8"
+	tokenCountModelSonnet = "claude-sonnet-4-6"
+)
+
 type sessionBenchResult struct {
 	shortID          string
 	contextTokens    int
@@ -66,11 +71,14 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 	}
 
 	var p pricing
+	var tokenCountModel string
 	switch *model {
 	case "sonnet":
 		p = pricingSonnet
+		tokenCountModel = tokenCountModelSonnet
 	case "opus":
 		p = pricingOpus
+		tokenCountModel = tokenCountModelOpus
 	default:
 		return fmt.Errorf("unknown model %q: must be opus or sonnet", *model)
 	}
@@ -140,7 +148,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 		}
 
 		if tokenCounter == nil {
-			tokenCounter, err = newCountTokensFn()
+			tokenCounter, err = newCountTokensFn(tokenCountModel)
 			if err != nil {
 				return fmt.Errorf("initialize token counter: %w", err)
 			}

@@ -51,34 +51,43 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 	}
 
 	if !*isNoTokens {
+		countTokens, tokenCounterErr := newCountTokensFn("")
 		if result.APICallCount > 0 {
-			filtAPI, errFilt := countTokensFn(result.FilteredText)
-			opts.FilteredTokens = filtAPI
-			opts.TokenErr = errFilt
+			if tokenCounterErr != nil {
+				opts.TokenErr = tokenCounterErr
+			} else {
+				filtAPI, errFilt := countTokens(result.FilteredText)
+				opts.FilteredTokens = filtAPI
+				opts.TokenErr = errFilt
+			}
 		} else {
 			var (
 				rawAPI, filtAPI int
 				errRaw, errFilt error
 				wg              sync.WaitGroup
 			)
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
-				rawAPI, errRaw = countTokensFn(result.RawText)
-			}()
-			go func() {
-				defer wg.Done()
-				filtAPI, errFilt = countTokensFn(result.FilteredText)
-			}()
-			wg.Wait()
-			if errRaw == nil && errFilt == nil {
-				opts.RawTokens = rawAPI
-				opts.FilteredTokens = filtAPI
+			if tokenCounterErr != nil {
+				opts.TokenErr = tokenCounterErr
 			} else {
-				if errFilt != nil {
-					opts.TokenErr = errFilt
+				wg.Add(2)
+				go func() {
+					defer wg.Done()
+					rawAPI, errRaw = countTokens(result.RawText)
+				}()
+				go func() {
+					defer wg.Done()
+					filtAPI, errFilt = countTokens(result.FilteredText)
+				}()
+				wg.Wait()
+				if errRaw == nil && errFilt == nil {
+					opts.RawTokens = rawAPI
+					opts.FilteredTokens = filtAPI
 				} else {
-					opts.TokenErr = errRaw
+					if errFilt != nil {
+						opts.TokenErr = errFilt
+					} else {
+						opts.TokenErr = errRaw
+					}
 				}
 			}
 		}

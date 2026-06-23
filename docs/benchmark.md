@@ -35,8 +35,8 @@ All other parameters are derived automatically from your real session data.
 | `--overhead` | 40000 | Your measured session overhead tokens |
 | `--days` | 30 | How far back to scan for sessions |
 | `--min-kb` | 100 | Minimum JSONL file size in KB |
-| `--n` | 10 | Max sessions to analyze |
-| `--model` | opus | Pricing model: `opus` or `sonnet` |
+| `--n` | 10 | Max successful session results to report |
+| `--model` | opus | Pricing and token-counting model family: `opus` or `sonnet` |
 
 ### Example output
 
@@ -130,7 +130,7 @@ Turn N (N≥2): same as A but with smaller base
 | Parameter | Source | Description |
 |-----------|--------|-------------|
 | X | `stats.LastContextTokens` | Original session context size |
-| C | Anthropic token counting API on `filteredText` | cc-session compressed history size |
+| C | Anthropic token counting API on `filteredText`, using the selected `--model` family | cc-session compressed history size |
 | overhead | `--overhead` flag (user-measured) | System + tools + CLAUDE.md |
 | NewCtx | `overhead + C` | New session total context after injecting cc-session output |
 | K | `APICallCount / UserTurnCount` | API calls per user turn |
@@ -142,9 +142,11 @@ Turn N (N≥2): same as A but with smaller base
 The compression table compares total context to total context: `X` vs `NewCtx`.
 Cost simulation still keeps `C` and `overhead` separate because cache setup writes
 the new session base as `overhead + C`. `X` comes from transcript API usage and
-`C` comes from the Anthropic token counting API. Fallback constants are used only
-for behavior that cannot be read directly from transcript usage, such as sparse
-tool I/O data.
+`C` comes from the Anthropic token counting API. The `--model` flag controls both
+pricing and the tokenizer used by the token counting API: `opus` uses
+`claude-opus-4-8`, and `sonnet` uses `claude-sonnet-4-6`. Fallback constants are
+used only for behavior that cannot be read directly from transcript usage, such
+as sparse tool I/O data.
 
 ### Simplifications
 
@@ -159,7 +161,7 @@ tool I/O data.
 │  parser.ListAll     │  Scan ~/.claude/projects/*/  and session-meta/
 │  Sessions()         │  for JSONL files + metadata
 └────────┬────────────┘
-         │ filter by --days, --min-kb, sort by size, take --n
+         │ filter by --days and --min-kb, sort by size
          ▼
 ┌─────────────────────┐
 │  reader.ReadAll     │  Read JSONL → parse each line into session.Event
@@ -176,8 +178,15 @@ tool I/O data.
          │               - CompactCount (for skip detection)
          ▼
 ┌─────────────────────┐
-│  tokens.Count       │  Anthropic token counting API for filteredTokens.
-│  TokensAPI(text)    │  LastContextTokens comes from transcript API usage.
+│  tokens.NewCounter  │  Resolve API key once with the selected token-counting
+│  (model)            │  model, then reuse the counter for successful sessions.
+└────────┬────────────┘
+         │ count FilteredText; skip compacted sessions and sessions without
+         │ API usage data until --n successful results have been collected
+         ▼
+┌─────────────────────┐
+│  counter.Count      │  Anthropic token counting API for filteredTokens.
+│  (filteredText)     │  LastContextTokens comes from transcript API usage.
 └────────┬────────────┘
          │
          ▼

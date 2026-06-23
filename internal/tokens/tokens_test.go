@@ -48,8 +48,8 @@ func TestCountTokens_SendsAnthropicRequestAndParsesResponse(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if payload.Model != anthropicModel {
-			t.Fatalf("model = %q, want %q", payload.Model, anthropicModel)
+		if payload.Model != DefaultCountTokensModel {
+			t.Fatalf("model = %q, want %q", payload.Model, DefaultCountTokensModel)
 		}
 		if len(payload.Messages) != 1 || payload.Messages[0].Role != "user" || payload.Messages[0].Content != "hello" {
 			t.Fatalf("messages = %#v, want one user hello message", payload.Messages)
@@ -60,7 +60,7 @@ func TestCountTokens_SendsAnthropicRequestAndParsesResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	got, err := countTokens("hello", "test-key", server.URL, server.Client())
+	got, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
 	if err != nil {
 		t.Fatalf("countTokens returned error: %v", err)
 	}
@@ -72,13 +72,40 @@ func TestCountTokens_SendsAnthropicRequestAndParsesResponse(t *testing.T) {
 	}
 }
 
+func TestCountTokens_GivenCustomModel_ThenSendsModelInAnthropicRequest(t *testing.T) {
+	const customModel = "claude-opus-4-8"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload.Model != customModel {
+			t.Fatalf("model = %q, want %q", payload.Model, customModel)
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens":456}`))
+	}))
+	defer server.Close()
+
+	got, err := countTokens("hello", "test-key", server.URL, customModel, server.Client())
+	if err != nil {
+		t.Fatalf("countTokens returned error: %v", err)
+	}
+	if got != 456 {
+		t.Fatalf("countTokens = %d, want 456", got)
+	}
+}
+
 func TestCountTokens_WhenAPIReturnsError_ThenIncludesStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad key", http.StatusUnauthorized)
 	}))
 	defer server.Close()
 
-	_, err := countTokens("hello", "test-key", server.URL, server.Client())
+	_, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
 	if err == nil {
 		t.Fatal("countTokens returned nil error, want API status error")
 	}
@@ -103,7 +130,7 @@ func TestCountTokens_WhenTransientErrorThenSuccess_ThenRetriesAndSucceeds(t *tes
 	}))
 	defer server.Close()
 
-	got, err := countTokens("hello", "test-key", server.URL, server.Client())
+	got, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
 	if err != nil {
 		t.Fatalf("countTokens returned error after retry: %v", err)
 	}
@@ -126,7 +153,7 @@ func TestCountTokens_WhenNonTransientError_ThenDoesNotRetry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := countTokens("hello", "test-key", server.URL, server.Client())
+	_, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
 	if err == nil {
 		t.Fatal("countTokens returned nil error, want immediate 400 error")
 	}
@@ -159,7 +186,7 @@ func TestCountTokens_When429WithRetryAfter_ThenRespectsHintAndSucceeds(t *testin
 	}))
 	defer server.Close()
 
-	got, err := countTokens("hello", "test-key", server.URL, server.Client())
+	got, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
 	if err != nil {
 		t.Fatalf("countTokens returned error after 429 retry: %v", err)
 	}

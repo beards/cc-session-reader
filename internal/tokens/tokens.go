@@ -19,7 +19,6 @@ import (
 
 const (
 	countTokensURL = "https://api.anthropic.com/v1/messages/count_tokens"
-	anthropicModel = "claude-sonnet-4-6"
 	apiVersion     = "2023-06-01"
 
 	// perAttemptTimeout bounds a single HTTP attempt. Each retry gets a fresh
@@ -31,11 +30,13 @@ const (
 	baseRetryDelay = 500 * time.Millisecond
 )
 
+const DefaultCountTokensModel = "claude-sonnet-4-6"
+
 // CountTokensAPI calls the Anthropic count_tokens endpoint.
 // Resolves the API key from: env ANTHROPIC_API_KEY → config file path in
 // ~/.claude/skills/<skillDirName>/config.json → error.
 func CountTokensAPI(text string) (int, error) {
-	counter, err := NewCounter()
+	counter, err := NewCounter(DefaultCountTokensModel)
 	if err != nil {
 		return 0, err
 	}
@@ -46,25 +47,30 @@ func CountTokensAPI(text string) (int, error) {
 type Counter struct {
 	apiKey   string
 	endpoint string
+	model    string
 	client   *http.Client
 }
 
 // NewCounter resolves credentials once and returns a reusable token counter.
-func NewCounter() (*Counter, error) {
+func NewCounter(model string) (*Counter, error) {
 	apiKey := resolveAPIKey()
 	if apiKey == "" {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set (set env var or configure anthropic_api_key_file in ~/.claude/skills/%s/config.json)", skillpath.SkillDirName)
 	}
+	if model == "" {
+		model = DefaultCountTokensModel
+	}
 	return &Counter{
 		apiKey:   apiKey,
 		endpoint: countTokensURL,
+		model:    model,
 		client:   &http.Client{},
 	}, nil
 }
 
 // Count returns the Anthropic input token count for text.
 func (c *Counter) Count(text string) (int, error) {
-	return countTokens(text, c.apiKey, c.endpoint, c.client)
+	return countTokens(text, c.apiKey, c.endpoint, c.model, c.client)
 }
 
 func resolveAPIKey() string {
@@ -115,14 +121,14 @@ func parseKeyFromEnvFile(path string) string {
 	return ""
 }
 
-func countTokens(text string, apiKey string, endpoint string, client *http.Client) (int, error) {
+func countTokens(text string, apiKey string, endpoint string, model string, client *http.Client) (int, error) {
 	// ctx bounds the whole call (e.g. caller cancellation) but is NOT a single
 	// shared deadline for every attempt — each attempt derives its own
 	// perAttemptTimeout, and the retry loop is bounded by maxAttempts.
 	ctx := context.Background()
 
 	payload := map[string]any{
-		"model": anthropicModel,
+		"model": model,
 		"messages": []map[string]any{
 			{"role": "user", "content": text},
 		},

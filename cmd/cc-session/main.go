@@ -21,8 +21,8 @@ var countTokensFn countTokensFunc = tokens.CountTokensAPI
 
 // newCountTokensFn builds a reusable token-counting backend for commands that
 // count multiple inputs in one run.
-var newCountTokensFn = func() (countTokensFunc, error) {
-	counter, err := tokens.NewCounter()
+var newCountTokensFn = func(model string) (countTokensFunc, error) {
+	counter, err := tokens.NewCounter(model)
 	if err != nil {
 		return nil, err
 	}

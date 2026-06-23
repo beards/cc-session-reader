@@ -104,7 +104,9 @@ func TestRunBenchmark_WhenSessionHasAPIUsage_ThenUsesTokenCountingAPIForNewConte
 	original := newCountTokensFn
 	t.Cleanup(func() { newCountTokensFn = original })
 	var countedText string
-	newCountTokensFn = func() (countTokensFunc, error) {
+	var countModel string
+	newCountTokensFn = func(model string) (countTokensFunc, error) {
+		countModel = model
 		return func(text string) (int, error) {
 			countedText = text
 			if text != stats.FilteredText {
@@ -123,12 +125,24 @@ func TestRunBenchmark_WhenSessionHasAPIUsage_ThenUsesTokenCountingAPIForNewConte
 	if countedText == "" {
 		t.Fatal("countTokensFn was not called")
 	}
+	if countModel != tokenCountModelOpus {
+		t.Fatalf("token counter model = %q, want %q", countModel, tokenCountModelOpus)
+	}
 	got := stdout.String()
 	row := outputLineContaining(got, "aaaaaaaa")
 	for _, want := range []string{"100,000", analyzer.FormatNumber(40_000 + filteredTokenCount), "36.5%"} {
 		if !strings.Contains(row, want) {
 			t.Fatalf("benchmark row missing %s:\nrow: %s\nfull output:\n%s", want, row, got)
 		}
+	}
+	costSection := outputSection(got, "=== Cost Savings Per Session")
+	for _, want := range []string{"NewCtx", analyzer.FormatNumber(40_000 + filteredTokenCount)} {
+		if !strings.Contains(costSection, want) {
+			t.Fatalf("cost summary missing %s:\nsection:\n%s\nfull output:\n%s", want, costSection, got)
+		}
+	}
+	if strings.Contains(costSection, analyzer.FormatNumber(filteredTokenCount)) {
+		t.Fatalf("cost summary leaked filtered-history-only token count:\nsection:\n%s", costSection)
 	}
 }
 
@@ -156,7 +170,7 @@ func TestRunBenchmark_WhenSessionHasNoAPIUsage_ThenSkipsSession(t *testing.T) {
 
 	original := newCountTokensFn
 	t.Cleanup(func() { newCountTokensFn = original })
-	newCountTokensFn = func() (countTokensFunc, error) {
+	newCountTokensFn = func(model string) (countTokensFunc, error) {
 		t.Fatal("newCountTokensFn must not be called for sessions without API usage data")
 		return nil, nil
 	}
@@ -208,7 +222,7 @@ func TestRunBenchmark_WhenTopCandidateIsSkipped_ThenNCountsProcessedResults(t *t
 
 	original := newCountTokensFn
 	t.Cleanup(func() { newCountTokensFn = original })
-	newCountTokensFn = func() (countTokensFunc, error) {
+	newCountTokensFn = func(model string) (countTokensFunc, error) {
 		return func(text string) (int, error) {
 			return 20_000, nil
 		}, nil
@@ -229,6 +243,98 @@ func TestRunBenchmark_WhenTopCandidateIsSkipped_ThenNCountsProcessedResults(t *t
 	}
 }
 
+func TestRunBenchmark_GivenSonnetModel_ThenUsesSonnetTokenCounterModel(t *testing.T) {
+	root := t.TempDir()
+	metaDir := filepath.Join(root, "session-meta")
+	projectDir := filepath.Join(root, "projects", "proj")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+
+	sid := "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+	transcript := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+
+	original := newCountTokensFn
+	t.Cleanup(func() { newCountTokensFn = original })
+	var countModel string
+	newCountTokensFn = func(model string) (countTokensFunc, error) {
+		countModel = model
+		return func(text string) (int, error) {
+			return 20_000, nil
+		}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir}
+	if err := runBenchmark([]string{"--n", "1", "--min-kb", "0", "--model", "sonnet"}, &stdout, &stderr, store, testReader); err != nil {
+		t.Fatalf("runBenchmark returned error: %v", err)
+	}
+
+	if countModel != tokenCountModelSonnet {
+		t.Fatalf("token counter model = %q, want %q", countModel, tokenCountModelSonnet)
+	}
+}
+
+func TestRunBenchmark_GivenTwoValidSessions_ThenReusesTokenCounter(t *testing.T) {
+	root := t.TempDir()
+	metaDir := filepath.Join(root, "session-meta")
+	projectDir := filepath.Join(root, "projects", "proj")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+
+	for _, sid := range []string{"ffffffff-ffff-ffff-ffff-ffffffffffff", "99999999-9999-9999-9999-999999999999"} {
+		transcript := strings.Join([]string{
+			`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
+			`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+			"",
+		}, "\n")
+		if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+			t.Fatalf("write transcript %s: %v", sid, err)
+		}
+		writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+	}
+
+	original := newCountTokensFn
+	t.Cleanup(func() { newCountTokensFn = original })
+	factoryCalls := 0
+	counterCalls := 0
+	newCountTokensFn = func(model string) (countTokensFunc, error) {
+		factoryCalls++
+		return func(text string) (int, error) {
+			counterCalls++
+			return 20_000, nil
+		}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir}
+	if err := runBenchmark([]string{"--n", "2", "--min-kb", "0", "--overhead", "40000"}, &stdout, &stderr, store, testReader); err != nil {
+		t.Fatalf("runBenchmark returned error: %v", err)
+	}
+
+	if factoryCalls != 1 {
+		t.Fatalf("newCountTokensFn calls = %d, want 1", factoryCalls)
+	}
+	if counterCalls != 2 {
+		t.Fatalf("token counter calls = %d, want 2", counterCalls)
+	}
+}
+
 func outputLineContaining(output string, needle string) string {
 	for _, line := range strings.Split(output, "\n") {
 		if strings.Contains(line, needle) {
@@ -236,4 +342,16 @@ func outputLineContaining(output string, needle string) string {
 		}
 	}
 	return ""
+}
+
+func outputSection(output string, header string) string {
+	start := strings.Index(output, header)
+	if start < 0 {
+		return ""
+	}
+	rest := output[start:]
+	if next := strings.Index(rest[len(header):], "\n==="); next >= 0 {
+		return rest[:len(header)+next]
+	}
+	return rest
 }

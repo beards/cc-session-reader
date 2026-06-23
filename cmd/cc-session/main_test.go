@@ -446,10 +446,10 @@ func pad10(s string) string {
 }
 
 // When both concurrent token-count calls succeed, runStats prints the
-// Anthropic-API block (not the estimate block). The package-level countTokensFn
-// seam lets us stub a deterministic success offline. Returning distinct raw/
-// filtered counts proves each result is routed to its own line rather than one
-// value being printed twice.
+// Anthropic-API block (not the estimate block). The package-level
+// newCountTokensFn seam lets us stub a deterministic success offline. Returning
+// distinct raw/filtered counts proves each result is routed to its own line
+// rather than one value being printed twice.
 func TestRunStats_WhenTokenAPISucceeds_ThenPrintsAPITokenCounts(t *testing.T) {
 	// A tool_use carries raw input/result that is CUT from the filtered stream,
 	// so RawText and FilteredText genuinely differ — letting the stub route a
@@ -485,16 +485,20 @@ func TestRunStats_WhenTokenAPISucceeds_ThenPrintsAPITokenCounts(t *testing.T) {
 		rawCount  = 1234
 		filtCount = 567
 	)
-	original := countTokensFn
-	t.Cleanup(func() { countTokensFn = original })
+	original := newCountTokensFn
+	t.Cleanup(func() { newCountTokensFn = original })
+	factoryCalls := 0
 	// Route the larger count to the raw stream, the smaller to the filtered
 	// stream. A mutation that fed both lines the same text would print one
 	// value twice and drop the other.
-	countTokensFn = func(text string) (int, error) {
-		if text == result.RawText {
-			return rawCount, nil
-		}
-		return filtCount, nil
+	newCountTokensFn = func(model string) (countTokensFunc, error) {
+		factoryCalls++
+		return func(text string) (int, error) {
+			if text == result.RawText {
+				return rawCount, nil
+			}
+			return filtCount, nil
+		}, nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -511,6 +515,9 @@ func TestRunStats_WhenTokenAPISucceeds_ThenPrintsAPITokenCounts(t *testing.T) {
 	}
 	if strings.Contains(got, "~") {
 		t.Fatalf("API branch should not print '~' approximate markers:\n%s", got)
+	}
+	if factoryCalls != 1 {
+		t.Fatalf("newCountTokensFn calls = %d, want 1", factoryCalls)
 	}
 	// Each count must land on its correctly-labelled line. Pinning the value to
 	// the line (not just "appears somewhere") is what catches a SUT mutation
