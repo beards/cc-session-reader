@@ -104,7 +104,7 @@ function Update-UserPath {
         return
     }
 
-    $answer = Read-HostOrDefault -Prompt "Add $InstallDir to user PATH? [y/N]" -Default "N"
+    $answer = Read-HostOrDefault -Prompt "Add $InstallDir to user PATH? [Y/n]" -Default "Y"
     if ($answer -match '^[Yy]$') {
         $newPath = ($dirs + $InstallDir) -join ';'
         [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
