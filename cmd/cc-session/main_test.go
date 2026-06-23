@@ -436,14 +436,14 @@ func TestRunStats_WhenTokenAPIUnavailable_ThenFallsBackToEstimate(t *testing.T) 
 	if !strings.Contains(got, "=== Tokens (estimated) ===") {
 		t.Fatalf("stdout missing estimated-tokens header:\n%s", got)
 	}
-	// UX: the fallback must explain itself on stderr so the user knows why they
-	// got an estimate. The diagnostic belongs on stderr, never in the stdout
-	// payload — assert both. A mutation that drops the warning turns this red.
-	if !strings.Contains(stderr.String(), "hint: to see token counts") {
-		t.Fatalf("stderr missing config hint:\n%s", stderr.String())
+	// UX: the fallback must explain itself so the user knows why they got an
+	// estimate. The hint goes to stdout (not stderr) to avoid red text in
+	// PowerShell. A mutation that drops the warning turns this red.
+	if !strings.Contains(got, "hint: to see token counts") {
+		t.Fatalf("stdout missing config hint:\n%s", got)
 	}
-	if strings.Contains(got, "hint:") {
-		t.Fatalf("hint leaked into stdout payload:\n%s", got)
+	if strings.Contains(stderr.String(), "hint:") {
+		t.Fatalf("hint must not appear in stderr (renders red in PowerShell):\n%s", stderr.String())
 	}
 	if strings.Contains(got, "=== Tokens (Anthropic API) ===") {
 		t.Fatalf("stdout unexpectedly took the API branch:\n%s", got)
@@ -939,8 +939,30 @@ func TestRunList_GivenJSONLWithoutMetadata_ThenShowsFallbackSession(t *testing.T
 	if !strings.Contains(got, "help me understand channels") {
 		t.Fatalf("stdout missing first prompt from JSONL fallback:\n%s", got)
 	}
+	if strings.Contains(got, "u:0") || strings.Contains(got, "a:0") {
+		t.Fatalf("stdout should not show u:0/a:0 for JSONL fallback (no count data):\n%s", got)
+	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty for JSONL-only session", stderr.String())
+	}
+}
+
+func TestRunList_GivenMetaWithCounts_ThenShowsCounts(t *testing.T) {
+	root := t.TempDir()
+	metaDir := filepath.Join(root, "session-meta")
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+	writeListMeta(t, metaDir, "cccccccc-cccc-cccc-cccc-cccccccccccc", "/tmp/proj", "hello")
+
+	var stdout, stderr bytes.Buffer
+	err := runList(nil, &stdout, &stderr, parser.Store{SessionMetaDir: metaDir})
+	if err != nil {
+		t.Fatalf("runList returned error: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "u:1 a:2") {
+		t.Fatalf("stdout should show u:1 a:2 from metadata counts:\n%s", got)
 	}
 }
 

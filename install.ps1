@@ -6,6 +6,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Read-HostOrDefault {
+    param([string]$Prompt, [string]$Default)
+    try {
+        return (Read-Host $Prompt)
+    } catch {
+        Write-Host "(non-interactive: using default '$Default')"
+        return $Default
+    }
+}
+
 $Repo      = "Mapleeeeeeeeeee/cc-session-reader"
 $InstallDir = Join-Path $env:LOCALAPPDATA "cc-session"
 $SkillDir  = Join-Path $HOME ".claude\skills\cc-session"
@@ -94,7 +104,7 @@ function Update-UserPath {
         return
     }
 
-    $answer = Read-Host "Add $InstallDir to user PATH? [y/N]"
+    $answer = Read-HostOrDefault -Prompt "Add $InstallDir to user PATH? [y/N]" -Default "N"
     if ($answer -match '^[Yy]$') {
         $newPath = ($dirs + $InstallDir) -join ';'
         [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
@@ -108,7 +118,7 @@ function Install-Skill {
     if ($NoSkill) { return }
 
     if ([Environment]::UserInteractive) {
-        $answer = Read-Host "Install Claude Code skill (cc-session)? [Y/n]"
+        $answer = Read-HostOrDefault -Prompt "Install Claude Code skill (cc-session)? [Y/n]" -Default "Y"
         if ($answer -match '^[Nn]$') { return }
     }
 

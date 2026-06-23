@@ -134,7 +134,7 @@ func WritePage(pageLines []string, pageNum, totalPages, startLine, totalLines in
 		fmt.Fprintln(out)
 	}
 	if pageNum == totalPages {
-		fmt.Fprintf(out, "[inject complete: %d pages, %d lines]\n", totalPages, totalLines)
+		fmt.Fprintf(out, "[inject complete: %d pages, %d lines] — use -reset to start over\n", totalPages, totalLines)
 	} else {
 		fmt.Fprintf(out, "[page %d/%d complete — run again for next page]\n", pageNum, totalPages)
 	}

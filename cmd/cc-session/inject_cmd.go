@@ -82,7 +82,7 @@ func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	}
 
 	if pageNum > totalPages {
-		fmt.Fprintf(out, "[inject complete: %d pages, %d lines]\n", totalPages, totalLines)
+		fmt.Fprintf(out, "[inject complete: %d pages, %d lines] — use -reset to start over\n", totalPages, totalLines)
 		return nil
 	}
 	if pageNum < 1 {

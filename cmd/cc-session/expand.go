@@ -16,7 +16,7 @@ func cmdExpand(args []string, reader session.TranscriptReader) {
 
 func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Store, reader session.TranscriptReader) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: cc-session expand <session-id> <tool-id> [tool-id...]")
+		return fmt.Errorf("usage: cc-session expand <session-id> <tool-id> [tool-id...]\n\n  tool-id is the short ID shown in read output, e.g. [Grep#Q1hv] → Q1hv\n\n  example: cc-session expand abc12345 Q1hv")
 	}
 
 	sessionPrefix := args[0]

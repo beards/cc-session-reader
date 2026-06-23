@@ -193,6 +193,9 @@ func TestGivenLastPage_WhenWritePage_ThenCompleteFooterAppears(t *testing.T) {
 	if !strings.Contains(out, "[inject complete: 3 pages, 100 lines]") {
 		t.Errorf("missing complete footer in: %q", out)
 	}
+	if !strings.Contains(out, "use -reset to start over") {
+		t.Errorf("missing -reset hint in complete footer: %q", out)
+	}
 }
 
 func TestGivenOnlyOnePage_WhenWritePage_ThenCompleteFooterAppears(t *testing.T) {
@@ -201,6 +204,9 @@ func TestGivenOnlyOnePage_WhenWritePage_ThenCompleteFooterAppears(t *testing.T) 
 	out := sb.String()
 	if !strings.Contains(out, "[inject complete: 1 pages, 1 lines]") {
 		t.Errorf("missing complete footer in: %q", out)
+	}
+	if !strings.Contains(out, "use -reset to start over") {
+		t.Errorf("missing -reset hint in complete footer: %q", out)
 	}
 }
 

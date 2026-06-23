@@ -59,8 +59,12 @@ func runList(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 			dateStr = parser.FormatTimestamp(entry.StartTime)
 		}
 
-		fmt.Fprintf(out, "%s  %s  %-20s  %3dm  u:%d a:%d  %s\n",
-			entry.SessionID, dateStr, projectName, entry.DurationMinutes, entry.UserMessageCount, entry.AssistantMessageCount, entry.FirstPrompt)
+		countStr := fmt.Sprintf("u:%d a:%d", entry.UserMessageCount, entry.AssistantMessageCount)
+		if entry.UserMessageCount == 0 && entry.AssistantMessageCount == 0 {
+			countStr = "       "
+		}
+		fmt.Fprintf(out, "%s  %s  %-20s  %3dm  %s  %s\n",
+			entry.SessionID, dateStr, projectName, entry.DurationMinutes, countStr, entry.FirstPrompt)
 		printed++
 	}
 

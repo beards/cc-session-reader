@@ -110,10 +110,10 @@ func RenderStats(out io.Writer, errOut io.Writer, result StatsResult, opts Rende
 				fmt.Fprintf(out, "  Saved:            %10s (%.1f%%)\n", FormatNumber(saved), pct)
 			}
 		} else {
-			PrintConfigHint(errOut)
+			PrintConfigHint(out)
 		}
 	} else if opts.UseEstimate {
-		PrintConfigHint(errOut)
+		PrintConfigHint(out)
 		saved := opts.RawTokens - opts.FilteredTokens
 		fmt.Fprintln(out, "=== Tokens (estimated) ===")
 		fmt.Fprintf(out, "  Raw:      %10s ~\n", FormatNumber(opts.RawTokens))
@@ -133,7 +133,7 @@ func RenderStats(out io.Writer, errOut io.Writer, result StatsResult, opts Rende
 				fmt.Fprintf(out, "  Saved:    %10s (%.1f%%)\n", FormatNumber(saved), pct)
 			}
 		} else {
-			PrintConfigHint(errOut)
+			PrintConfigHint(out)
 		}
 	}
 }

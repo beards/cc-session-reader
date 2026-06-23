@@ -205,15 +205,18 @@ func TestRenderStats_GivenSkipTokens_WhenRendered_ThenTokenSectionAbsent(t *test
 	}
 }
 
-func TestRenderStats_GivenHasAPIDataWithTokenError_WhenRendered_ThenConfigHintWrittenToErrOut(t *testing.T) {
+func TestRenderStats_GivenHasAPIDataWithTokenError_WhenRendered_ThenConfigHintWrittenToOut(t *testing.T) {
 	opts := baseOpts()
 	opts.HasAPIData = true
 	opts.TokenErr = errors.New("unauthorized")
 	var out, errOut bytes.Buffer
 	RenderStats(&out, &errOut, baseResult(), opts)
 
-	if !strings.Contains(errOut.String(), "anthropic_api_key_file") {
-		t.Errorf("expected config hint in errOut when HasAPIData=true and TokenErr set, got: %q", errOut.String())
+	if !strings.Contains(out.String(), "anthropic_api_key_file") {
+		t.Errorf("expected config hint in out when HasAPIData=true and TokenErr set, got: %q", out.String())
+	}
+	if strings.Contains(errOut.String(), "anthropic_api_key_file") {
+		t.Errorf("config hint must not appear in errOut (would render red in PowerShell), got: %q", errOut.String())
 	}
 	if strings.Contains(out.String(), "=== Token Savings ===") {
 		t.Error("expected Token Savings section to be absent when TokenErr is set")
@@ -233,9 +236,12 @@ func TestRenderStats_GivenUseEstimate_WhenRendered_ThenTokenEstimateSectionPrese
 	assertOutputContains(t, body, "=== Tokens (estimated) ===")
 	assertOutputContains(t, body, "1,800") // raw estimate
 	assertOutputContains(t, body, "900")   // filtered estimate
-	// config hint also shown alongside estimates
-	if !strings.Contains(errOut.String(), "anthropic_api_key_file") {
-		t.Errorf("expected config hint in errOut for UseEstimate path, got: %q", errOut.String())
+	// config hint shown in stdout so it doesn't render red in PowerShell
+	if !strings.Contains(body, "anthropic_api_key_file") {
+		t.Errorf("expected config hint in out for UseEstimate path, got: %q", body)
+	}
+	if strings.Contains(errOut.String(), "anthropic_api_key_file") {
+		t.Errorf("config hint must not appear in errOut (would render red in PowerShell), got: %q", errOut.String())
 	}
 }
 
@@ -254,7 +260,7 @@ func TestRenderStats_GivenNoAPIDataAndNoEstimateAndNoError_WhenRendered_ThenAnth
 	assertOutputContains(t, body, "900")
 }
 
-func TestRenderStats_GivenNoAPIDataWithTokenError_WhenRendered_ThenConfigHintWrittenToErrOut(t *testing.T) {
+func TestRenderStats_GivenNoAPIDataWithTokenError_WhenRendered_ThenConfigHintWrittenToOut(t *testing.T) {
 	opts := baseOpts()
 	opts.HasAPIData = false
 	opts.UseEstimate = false
@@ -262,8 +268,12 @@ func TestRenderStats_GivenNoAPIDataWithTokenError_WhenRendered_ThenConfigHintWri
 	var out, errOut bytes.Buffer
 	RenderStats(&out, &errOut, baseResult(), opts)
 
-	if !strings.Contains(errOut.String(), "anthropic_api_key_file") {
-		t.Errorf("expected config hint in errOut when no API data and TokenErr set, got: %q", errOut.String())
+	// hint goes to stdout to avoid red text in PowerShell
+	if !strings.Contains(out.String(), "anthropic_api_key_file") {
+		t.Errorf("expected config hint in out when no API data and TokenErr set, got: %q", out.String())
+	}
+	if strings.Contains(errOut.String(), "anthropic_api_key_file") {
+		t.Errorf("config hint must not appear in errOut (would render red in PowerShell), got: %q", errOut.String())
 	}
 }
 
