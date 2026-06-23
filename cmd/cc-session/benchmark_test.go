@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestPrintCompressionSection_UsesNewSessionTotalContext(t *testing.T) {
+func TestPrintCompressionSection_WhenRendered_ThenUsesNewSessionTotalContext(t *testing.T) {
 	results := []sessionBenchResult{
 		{
 			shortID:          "aaaaaaaa",
