@@ -39,16 +39,16 @@ All other parameters are derived automatically from your real session data.
 
 ```
 === Compression ===
-Session        Context    Filtered   Saved
-e61060b1       403,129      85,089  78.9%
-977b7360       381,032      36,808  90.3%
+Session        Context      NewCtx   Saved
+e61060b1       403,129     125,089  69.0%
+977b7360       381,032      76,808  79.8%
 
-Median: 84.6%   Mean: 84.6%   Range: 78.9% — 90.3%
+Median: 74.4%   Mean: 74.4%   Range: 69.0% — 79.8%
 
 === Cost Savings Per Session (opus) ===
-Session        Context    Filtered      K  Break-even   10-turn   100-turn
-e61060b1       403,129      85,089    4.5      turn 1       65%        51%
-977b7360       381,032      36,808    5.5      turn 1       72%        44%
+Session        Context      NewCtx      K  Break-even   10-turn   100-turn
+e61060b1       403,129     125,089    4.5      turn 1       66%        52%
+977b7360       381,032      76,808    5.5      turn 1       73%        45%
 
 Median break-even: turn 1 | 10-turn saving: 69% | 100-turn saving: 48%
 ```
@@ -127,15 +127,20 @@ Turn N (N≥2): same as A but with smaller base
 | Parameter | Source | Description |
 |-----------|--------|-------------|
 | X | `stats.LastContextTokens` | Original session context size |
-| C | `tokens.EstimateTokens(filteredText)` | cc-session compressed output size |
+| C | `tokens.EstimateTokens(filteredText)` | cc-session compressed history size |
 | overhead | `--overhead` flag (user-measured) | System + tools + CLAUDE.md |
+| NewCtx | `overhead + C` | New session total context after injecting cc-session output |
 | K | `APICallCount / UserTurnCount` | API calls per user turn |
 | toolIOPerCall (s) | `Σ(PerTool.InputChars + ResultChars) / Σ(CallCount) / 4` | Avg tool I/O per API call |
 | avgResponse | `TotalOutputTokens / APICallCount` | Avg output tokens per API call |
 | prompt (P) | `(LastContext - overhead) / turns - avgResp - toolIO×(K-1)` | Avg user prompt per turn |
 | growth | `avgResponse + prompt` | Cross-turn cache write (R + P) |
 
-All values except `overhead` are derived per-session from real data. Fallback constants are used only when session data is insufficient.
+The compression table compares total context to total context: `X` vs `NewCtx`.
+Cost simulation still keeps `C` and `overhead` separate because cache setup writes
+the new session base as `overhead + C`. All values except `overhead` are derived
+per-session from real data. Fallback constants are used only when session data is
+insufficient.
 
 ### Simplifications
 

@@ -33,17 +33,18 @@ var pricingOpus = pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
 var pricingSonnet = pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}
 
 type sessionBenchResult struct {
-	shortID        string
-	contextTokens  int
-	filteredTokens int
-	savedPct       float64
-	callsPerTurn   float64
-	toolIOPerCall  int // derived from actual PerTool data
-	avgResponse    int // derived from TotalOutputTokens / APICallCount
-	prompt         int // derived from context growth, or fallback perTurnPrompt
-	breakEven      int
-	saving10Pct    float64
-	saving100Pct   float64
+	shortID          string
+	contextTokens    int
+	filteredTokens   int
+	newContextTokens int
+	savedPct         float64
+	callsPerTurn     float64
+	toolIOPerCall    int // derived from actual PerTool data
+	avgResponse      int // derived from TotalOutputTokens / APICallCount
+	prompt           int // derived from context growth, or fallback perTurnPrompt
+	breakEven        int
+	saving10Pct      float64
+	saving100Pct     float64
 }
 
 func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.Store, reader session.TranscriptReader) error {
@@ -130,10 +131,11 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			contextToks = tokens.EstimateTokens(stats.RawText)
 		}
 		filteredToks := tokens.EstimateTokens(stats.FilteredText)
+		newContextToks := overheadToks + filteredToks
 
 		savedPct := 0.0
 		if contextToks > 0 {
-			savedPct = float64(contextToks-filteredToks) * 100.0 / float64(contextToks)
+			savedPct = float64(contextToks-newContextToks) * 100.0 / float64(contextToks)
 		}
 
 		if stats.CompactCount > 0 {
@@ -185,14 +187,15 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 		}
 
 		br := sessionBenchResult{
-			shortID:        session.ShortID(c.entry.SessionID, 8),
-			contextTokens:  contextToks,
-			filteredTokens: filteredToks,
-			savedPct:       savedPct,
-			callsPerTurn:   cpt,
-			toolIOPerCall:  toolIO,
-			avgResponse:    avgResp,
-			prompt:         prompt,
+			shortID:          session.ShortID(c.entry.SessionID, 8),
+			contextTokens:    contextToks,
+			filteredTokens:   filteredToks,
+			newContextTokens: newContextToks,
+			savedPct:         savedPct,
+			callsPerTurn:     cpt,
+			toolIOPerCall:    toolIO,
+			avgResponse:      avgResp,
+			prompt:           prompt,
 		}
 		computeCostMetrics(&br, overheadToks, p)
 		results = append(results, br)
@@ -212,12 +215,12 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 
 func printCompressionSection(out io.Writer, results []sessionBenchResult) {
 	fmt.Fprintln(out, "=== Compression ===")
-	fmt.Fprintf(out, "%-10s  %10s  %10s  %6s\n", "Session", "Context", "Filtered", "Saved")
+	fmt.Fprintf(out, "%-10s  %10s  %10s  %6s\n", "Session", "Context", "NewCtx", "Saved")
 	for _, r := range results {
 		fmt.Fprintf(out, "%-10s  %10s  %10s  %.1f%%\n",
 			r.shortID,
 			analyzer.FormatNumber(r.contextTokens),
-			analyzer.FormatNumber(r.filteredTokens),
+			analyzer.FormatNumber(r.newContextTokens),
 			r.savedPct,
 		)
 	}
@@ -228,7 +231,6 @@ func printCompressionSection(out io.Writer, results []sessionBenchResult) {
 		pcts[i] = r.savedPct
 	}
 	sort.Float64s(pcts)
-	median := pcts[len(pcts)/2]
 	mean := 0.0
 	for _, p := range pcts {
 		mean += p
@@ -236,7 +238,7 @@ func printCompressionSection(out io.Writer, results []sessionBenchResult) {
 	mean /= float64(len(pcts))
 
 	fmt.Fprintf(out, "Median: %.1f%%   Mean: %.1f%%   Range: %.1f%% — %.1f%%\n\n",
-		median, mean, pcts[0], pcts[len(pcts)-1])
+		medianFloat64(pcts), mean, pcts[0], pcts[len(pcts)-1])
 }
 
 // Cost model.
@@ -399,7 +401,7 @@ func computeCostMetrics(r *sessionBenchResult, overheadTokens int, p pricing) {
 func printCostSummary(out io.Writer, results []sessionBenchResult, p pricing, modelName string) {
 	fmt.Fprintf(out, "=== Cost Savings Per Session (%s) ===\n", modelName)
 	fmt.Fprintf(out, "%-10s  %10s  %10s  %5s  %10s  %8s  %9s\n",
-		"Session", "Context", "Filtered", "K", "Break-even", "10-turn", "100-turn")
+		"Session", "Context", "NewCtx", "K", "Break-even", "10-turn", "100-turn")
 
 	for _, r := range results {
 		beStr := "never"
@@ -409,7 +411,7 @@ func printCostSummary(out io.Writer, results []sessionBenchResult, p pricing, mo
 		fmt.Fprintf(out, "%-10s  %10s  %10s  %5.1f  %10s  %7.0f%%  %8.0f%%\n",
 			r.shortID,
 			analyzer.FormatNumber(r.contextTokens),
-			analyzer.FormatNumber(r.filteredTokens),
+			analyzer.FormatNumber(r.newContextTokens),
 			r.callsPerTurn,
 			beStr,
 			math.Round(r.saving10Pct),
@@ -435,12 +437,30 @@ func printCostSummary(out io.Writer, results []sessionBenchResult, p pricing, mo
 
 	beMedian := "never"
 	if len(breakEvens) > 0 {
-		beMedian = fmt.Sprintf("turn %.0f", breakEvens[len(breakEvens)/2])
+		beMedian = formatMedianTurn(medianFloat64(breakEvens))
 	}
 
 	fmt.Fprintf(out, "Median break-even: %s | 10-turn saving: %.0f%% | 100-turn saving: %.0f%%\n",
 		beMedian,
-		math.Round(saving10s[len(saving10s)/2]),
-		math.Round(saving100s[len(saving100s)/2]),
+		math.Round(medianFloat64(saving10s)),
+		math.Round(medianFloat64(saving100s)),
 	)
+}
+
+func medianFloat64(sorted []float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	mid := len(sorted) / 2
+	if len(sorted)%2 == 1 {
+		return sorted[mid]
+	}
+	return (sorted[mid-1] + sorted[mid]) / 2
+}
+
+func formatMedianTurn(turn float64) string {
+	if math.Mod(turn, 1) == 0 {
+		return fmt.Sprintf("turn %.0f", turn)
+	}
+	return fmt.Sprintf("turn %.1f", turn)
 }
