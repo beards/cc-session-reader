@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/config"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tracker"
 )
@@ -17,6 +18,9 @@ var usageWG sync.WaitGroup
 // logUsageAsync logs a usage entry in a background goroutine.
 // Call waitUsageLog before process exit to ensure the write completes.
 func logUsageAsync(cmd string, target string) {
+	if config.Get().NoUsage {
+		return
+	}
 	usageWG.Add(1)
 	go func() {
 		defer usageWG.Done()

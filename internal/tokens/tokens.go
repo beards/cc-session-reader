@@ -10,11 +10,10 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
-	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/config"
 )
 
 const (
@@ -55,7 +54,7 @@ type Counter struct {
 func NewCounter(model string) (*Counter, error) {
 	apiKey := resolveAPIKey()
 	if apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set (set env var or configure anthropic_api_key_file in ~/.claude/skills/%s/config.json)", skillpath.SkillDirName)
+		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set (set env var or configure anthropic_api_key_file in ~/.claude/skills/cc-session/config.json)")
 	}
 	if model == "" {
 		model = DefaultCountTokensModel
@@ -74,36 +73,17 @@ func (c *Counter) Count(text string) (int, error) {
 }
 
 func resolveAPIKey() string {
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+	cfg := config.Get()
+	if key := cfg.AnthropicAPIKey(); key != "" {
 		return key
 	}
-	return readKeyFromConfig()
+	if cfg.AnthropicAPIKeyFile == "" {
+		return ""
+	}
+	return readKeyFromFile(cfg.AnthropicAPIKeyFile)
 }
 
-func readKeyFromConfig() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	configPath := filepath.Join(skillpath.SkillDir(), "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return ""
-	}
-	var cfg struct {
-		AnthropicAPIKeyFile string `json:"anthropic_api_key_file"`
-	}
-	if json.Unmarshal(data, &cfg) != nil || cfg.AnthropicAPIKeyFile == "" {
-		return ""
-	}
-	keyPath := cfg.AnthropicAPIKeyFile
-	if len(keyPath) > 0 && keyPath[0] == '~' {
-		keyPath = filepath.Join(home, keyPath[1:])
-	}
-	return parseKeyFromEnvFile(keyPath)
-}
-
-func parseKeyFromEnvFile(path string) string {
+func readKeyFromFile(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""

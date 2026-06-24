@@ -13,6 +13,7 @@ import (
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/config"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
@@ -415,6 +416,7 @@ func TestRunStats_WhenTokenAPIUnavailable_ThenPrintsConfigHintWithoutEstimate(t 
 	// Empty key + no config.json => CountTokensAPI returns before any network call.
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("HOME", root)
+	config.Reset()
 
 	var stdout, stderr bytes.Buffer
 	if err := runStats([]string{sid}, &stdout, &stderr, store, testReader); err != nil {
@@ -1296,5 +1298,47 @@ func TestExitOnError_GivenErrHelp_ThenNoStderrOutput(t *testing.T) {
 	buf.ReadFrom(r)
 	if buf.Len() > 0 {
 		t.Fatalf("exitOnError(flag.ErrHelp) wrote to stderr: %q", buf.String())
+	}
+}
+
+func TestLogUsageAsync_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "1")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+
+	logUsageAsync("read", "abc12345")
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	if _, err := os.Stat(usagePath); err == nil {
+		t.Error("usage.jsonl was created despite CC_SESSION_NO_USAGE=1")
+	}
+}
+
+func TestLogUsageAsync_GivenNoUsageDisabled_ThenWritesToLog(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+
+	logUsageAsync("read", "abc12345")
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	data, err := os.ReadFile(usagePath)
+	if err != nil {
+		t.Fatalf("usage.jsonl not created: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, `"cmd":"read"`) {
+		t.Errorf("usage.jsonl missing cmd field, got: %s", line)
+	}
+	if !strings.Contains(line, `"target":"abc12345"`) {
+		t.Errorf("usage.jsonl missing target field, got: %s", line)
 	}
 }
