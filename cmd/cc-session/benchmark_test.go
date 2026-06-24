@@ -9,29 +9,30 @@ import (
 	"testing"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
+	bm "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/benchmark"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 )
 
 func TestPrintCompressionSection_WhenRendered_ThenUsesNewSessionTotalContext(t *testing.T) {
-	results := []sessionBenchResult{
+	results := []bm.Result{
 		{
-			shortID:          "aaaaaaaa",
-			contextTokens:    100_000,
-			filteredTokens:   23_456,
-			newContextTokens: 60_000,
-			savedPct:         40.0,
+			ShortID:          "aaaaaaaa",
+			ContextTokens:    100_000,
+			FilteredTokens:   23_456,
+			NewContextTokens: 60_000,
+			SavedPct:         40.0,
 		},
 		{
-			shortID:          "bbbbbbbb",
-			contextTokens:    200_000,
-			filteredTokens:   87_654,
-			newContextTokens: 120_000,
-			savedPct:         40.0,
+			ShortID:          "bbbbbbbb",
+			ContextTokens:    200_000,
+			FilteredTokens:   87_654,
+			NewContextTokens: 120_000,
+			SavedPct:         40.0,
 		},
 	}
 
 	var out bytes.Buffer
-	printCompressionSection(&out, results)
+	bm.PrintCompressionSection(&out, results)
 	got := out.String()
 
 	if !strings.Contains(got, "Context      NewCtx") {
@@ -52,21 +53,21 @@ func TestPrintCompressionSection_WhenRendered_ThenUsesNewSessionTotalContext(t *
 }
 
 func TestMedianFloat64_GivenEvenCount_ThenAveragesMiddleValues(t *testing.T) {
-	got := medianFloat64([]float64{78.9, 90.3})
+	got := bm.MedianFloat64([]float64{78.9, 90.3})
 	want := 84.6
 	if got != want {
-		t.Fatalf("medianFloat64(even) = %.1f, want %.1f", got, want)
+		t.Fatalf("MedianFloat64(even) = %.1f, want %.1f", got, want)
 	}
 }
 
 func TestPrintCompressionSection_GivenEvenCount_ThenPrintsAveragedMedian(t *testing.T) {
-	results := []sessionBenchResult{
-		{shortID: "aaaaaaaa", contextTokens: 100, newContextTokens: 20, savedPct: 78.9},
-		{shortID: "bbbbbbbb", contextTokens: 100, newContextTokens: 10, savedPct: 90.3},
+	results := []bm.Result{
+		{ShortID: "aaaaaaaa", ContextTokens: 100, NewContextTokens: 20, SavedPct: 78.9},
+		{ShortID: "bbbbbbbb", ContextTokens: 100, NewContextTokens: 10, SavedPct: 90.3},
 	}
 
 	var out bytes.Buffer
-	printCompressionSection(&out, results)
+	bm.PrintCompressionSection(&out, results)
 
 	if got := out.String(); !strings.Contains(got, "Median: 84.6%") {
 		t.Fatalf("compression summary must average the two middle values for even counts:\n%s", got)
@@ -76,36 +77,36 @@ func TestPrintCompressionSection_GivenEvenCount_ThenPrintsAveragedMedian(t *test
 func TestResolveBenchmarkModel_GivenAcceptedModelNames_ThenReturnsPricingAndTokenCountingModel(t *testing.T) {
 	tests := []struct {
 		name                string
-		wantPricing         pricing
+		wantPricing         bm.Pricing
 		wantTokenCountModel string
 	}{
-		{name: "opus", wantPricing: pricingOpus, wantTokenCountModel: tokenCountModelOpus48},
-		{name: "opus-4-6", wantPricing: pricingOpus, wantTokenCountModel: tokenCountModelOpus46},
-		{name: "opus-4-7", wantPricing: pricingOpus, wantTokenCountModel: tokenCountModelOpus47},
-		{name: "opus-4-8", wantPricing: pricingOpus, wantTokenCountModel: tokenCountModelOpus48},
-		{name: "sonnet", wantPricing: pricingSonnet, wantTokenCountModel: tokenCountModelSonnet},
+		{name: "opus", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus48},
+		{name: "opus-4-6", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus46},
+		{name: "opus-4-7", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus47},
+		{name: "opus-4-8", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus48},
+		{name: "sonnet", wantPricing: bm.PricingSonnet, wantTokenCountModel: bm.TokenCountModelSonnet},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveBenchmarkModel(tt.name)
+			got, err := bm.ResolveModel(tt.name)
 			if err != nil {
-				t.Fatalf("resolveBenchmarkModel(%q) returned error: %v", tt.name, err)
+				t.Fatalf("ResolveModel(%q) returned error: %v", tt.name, err)
 			}
-			if got.pricing != tt.wantPricing {
-				t.Fatalf("pricing = %+v, want %+v", got.pricing, tt.wantPricing)
+			if got.Pricing != tt.wantPricing {
+				t.Fatalf("pricing = %+v, want %+v", got.Pricing, tt.wantPricing)
 			}
-			if got.tokenCountModel != tt.wantTokenCountModel {
-				t.Fatalf("token count model = %q, want %q", got.tokenCountModel, tt.wantTokenCountModel)
+			if got.TokenCountModel != tt.wantTokenCountModel {
+				t.Fatalf("token count model = %q, want %q", got.TokenCountModel, tt.wantTokenCountModel)
 			}
 		})
 	}
 }
 
 func TestResolveBenchmarkModel_GivenUnknownModel_ThenReturnsAcceptedNames(t *testing.T) {
-	_, err := resolveBenchmarkModel("opus-4-5")
+	_, err := bm.ResolveModel("opus-4-5")
 	if err == nil {
-		t.Fatal("resolveBenchmarkModel returned nil error for unknown model")
+		t.Fatal("ResolveModel returned nil error for unknown model")
 	}
 
 	got := err.Error()
@@ -169,8 +170,9 @@ func TestRunBenchmark_WhenSessionHasAPIUsage_ThenUsesTokenCountingAPIForNewConte
 	if countedText == "" {
 		t.Fatal("countTokensFn was not called")
 	}
-	if countModel != tokenCountModelOpus48 {
-		t.Fatalf("token counter model = %q, want %q", countModel, tokenCountModelOpus48)
+	wantCountModel := bm.TokenCountModelOpus48
+	if countModel != wantCountModel {
+		t.Fatalf("token counter model = %q, want %q", countModel, wantCountModel)
 	}
 	got := stdout.String()
 	row := outputLineContaining(got, "aaaaaaaa")
@@ -325,8 +327,9 @@ func TestRunBenchmark_GivenSonnetModel_ThenUsesSonnetTokenCounterModel(t *testin
 		t.Fatalf("runBenchmark returned error: %v", err)
 	}
 
-	if countModel != tokenCountModelSonnet {
-		t.Fatalf("token counter model = %q, want %q", countModel, tokenCountModelSonnet)
+	wantCountModel := bm.TokenCountModelSonnet
+	if countModel != wantCountModel {
+		t.Fatalf("token counter model = %q, want %q", countModel, wantCountModel)
 	}
 }
 
@@ -406,7 +409,7 @@ func TestRunBenchmark_GivenNoAPIFlag_ThenSkipsAPIAndEstimatesFilteredTokensWithC
 	// guards against the bug where production code uses len(FilteredText) byte count
 	// instead of FilteredChars rune count — the two are equal for ASCII but diverge
 	// with multibyte characters
-	expectedFilteredToks := stats.FilteredChars / 2
+	expectedFilteredToks := stats.FilteredChars / bm.CharsPerToken
 
 	original := newCountTokensFn
 	t.Cleanup(func() { newCountTokensFn = original })
@@ -478,7 +481,7 @@ func TestRunBenchmark_GivenNoAPIFlagAndToolUse_ThenToolIOPerCallUsesCharsPerToke
 	if totalToolCalls == 0 {
 		t.Fatal("fixture invalid: transcript must have at least one tool call")
 	}
-	expectedToolIO := totalToolChars / totalToolCalls / charsPerToken
+	expectedToolIO := totalToolChars / totalToolCalls / bm.CharsPerToken
 
 	original := newCountTokensFn
 	t.Cleanup(func() { newCountTokensFn = original })

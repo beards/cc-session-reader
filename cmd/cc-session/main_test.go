@@ -1304,6 +1304,7 @@ func TestExitOnError_GivenErrHelp_ThenNoStderrOutput(t *testing.T) {
 func TestLogUsageAsync_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
 	t.Setenv("CC_SESSION_NO_USAGE", "1")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	config.Reset()
@@ -1318,13 +1319,27 @@ func TestLogUsageAsync_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
 	}
 }
 
-func TestLogUsageAsync_GivenNoUsageDisabled_ThenWritesToLog(t *testing.T) {
+func TestLogUsageAsync_GivenCallerSession_ThenWritesToLog(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
 	t.Setenv("CC_SESSION_NO_USAGE", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	config.Reset()
 	t.Cleanup(config.Reset)
+
+	// Create a fake Claude Code session so DetectCallerSession returns non-empty.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	projectDir := filepath.Join(root, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"))
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "fake-session-id.jsonl"), []byte{}, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
 
 	logUsageAsync("read", "abc12345")
 	waitUsageLog()
@@ -1340,5 +1355,24 @@ func TestLogUsageAsync_GivenNoUsageDisabled_ThenWritesToLog(t *testing.T) {
 	}
 	if !strings.Contains(line, `"target":"abc12345"`) {
 		t.Errorf("usage.jsonl missing target field, got: %s", line)
+	}
+}
+
+func TestLogUsageAsync_GivenNoCallerSession_ThenDoesNotWriteToLog(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+
+	// No Claude Code project directory created, so DetectCallerSession returns "".
+	logUsageAsync("read", "abc12345")
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	if _, err := os.Stat(usagePath); err == nil {
+		t.Error("usage.jsonl was created despite no caller session")
 	}
 }

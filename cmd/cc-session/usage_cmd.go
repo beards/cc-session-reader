@@ -24,8 +24,14 @@ func logUsageAsync(cmd string, target string) {
 	usageWG.Add(1)
 	go func() {
 		defer usageWG.Done()
-		cwd, _ := os.Getwd()
+		cwd, err := os.Getwd()
+		if err != nil {
+			return
+		}
 		caller := tracker.DetectCallerSession(cwd)
+		if caller == "" {
+			return
+		}
 		entry := tracker.UsageEntry{
 			Timestamp: time.Now().Format(time.RFC3339),
 			Command:   cmd,
