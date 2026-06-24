@@ -292,11 +292,23 @@ func printCompressionSection(out io.Writer, results []sessionBenchResult) {
 //	Client-side tools (bash/read/edit) don't get automatic server breakpoints.
 //	Each client tool round-trip is a separate API call with its own cache accounting.
 //
+// Thinking tokens lifecycle (source: platform.claude.com/docs/en/api/messages):
+//
+//	output_tokens includes thinking tokens (output_tokens_details.thinking_tokens
+//	provides a decomposition, but output_tokens is the authoritative billing total).
+//
+//	Turn N:   thinking generated         → output_tokens               @ $25/M   (Opus)
+//	Turn N+1: first time as input        → cache_creation_input_tokens @ $6.25/M (Opus)
+//	Turn N+2: subsequent turns as input  → cache_read_input_tokens     @ $0.50/M (Opus)
+//
+//	avgResponse (TotalOutputTokens / APICallCount) already includes thinking,
+//	so the growth model accounts for thinking tokens accumulating in context.
+//
 // Per-session derived values (from real session data):
 //
 //	K (callsPerTurn):  APICallCount / UserTurnCount
 //	toolIOPerCall:     Σ(PerTool.InputChars + ResultChars) / Σ(CallCount) / 4 chars-per-token
-//	avgResponse:       TotalOutputTokens / APICallCount
+//	avgResponse:       TotalOutputTokens / APICallCount (includes thinking tokens)
 //
 // Assumptions (not derivable from session data):
 //
