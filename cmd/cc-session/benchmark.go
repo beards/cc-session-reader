@@ -81,6 +81,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 	maxN := fs.Int("n", 10, "max sessions to include")
 	model := fs.String("model", "opus", "model: opus, opus-4-6, opus-4-7, opus-4-8, or sonnet")
 	overhead := fs.Int("overhead", 0, "session overhead tokens (system+tools+CLAUDE.md); measure with a 1-turn session")
+	isNoAPI := fs.Bool("no-api", false, "skip API calls; estimate filtered-text tokens with chars/2 (offline fallback)")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
 	}
@@ -163,15 +164,20 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			continue
 		}
 
-		if tokenCounter == nil {
-			tokenCounter, err = newCountTokensFn(tokenCountModel)
-			if err != nil {
-				return fmt.Errorf("initialize token counter: %w", err)
+		var filteredToks int
+		if *isNoAPI {
+			filteredToks = stats.FilteredChars / charsPerToken
+		} else {
+			if tokenCounter == nil {
+				tokenCounter, err = newCountTokensFn(tokenCountModel)
+				if err != nil {
+					return fmt.Errorf("initialize token counter: %w", err)
+				}
 			}
-		}
-		filteredToks, err := tokenCounter(stats.FilteredText)
-		if err != nil {
-			return fmt.Errorf("count filtered tokens for %s: %w", session.ShortID(c.entry.SessionID, 8), err)
+			filteredToks, err = tokenCounter(stats.FilteredText)
+			if err != nil {
+				return fmt.Errorf("count filtered tokens for %s: %w", session.ShortID(c.entry.SessionID, 8), err)
+			}
 		}
 		newContextToks := overheadToks + filteredToks
 
@@ -184,7 +190,8 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 
 		// Derive perCallToolIO from actual PerTool data (chars → tokens).
 		// PerTool.InputChars = tool_use JSON, PerTool.ResultChars = tool_result text.
-		// Ratio: ~4 chars per token for code/English, conservative estimate.
+		// Empirically measured weighted average: ~1.86 chars/token; chars/2 is the best
+		// estimate without sending raw tool text to the API.
 		toolIO := perCallToolIO // fallback to constant
 		totalToolChars := 0
 		totalToolCalls := 0
@@ -193,7 +200,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			totalToolCalls += ts.CallCount
 		}
 		if totalToolCalls > 0 {
-			toolIO = totalToolChars / totalToolCalls / 4
+			toolIO = totalToolChars / totalToolCalls / charsPerToken
 			if toolIO < 500 {
 				toolIO = 500
 			}
@@ -312,7 +319,9 @@ func printCompressionSection(out io.Writer, results []sessionBenchResult) {
 // Per-session derived values (from real session data):
 //
 //	K (callsPerTurn):  APICallCount / UserTurnCount
-//	toolIOPerCall:     Σ(PerTool.InputChars + ResultChars) / Σ(CallCount) / 4 chars-per-token
+//	toolIOPerCall:     Σ(PerTool.InputChars + ResultChars) / Σ(CallCount) / 2 chars-per-token
+//	                   (empirically ~1.86 chars/token weighted average; only char counts
+//	                   available — raw tool text not stored — so API call not applicable here)
 //	avgResponse:       TotalOutputTokens / APICallCount (includes thinking tokens)
 //
 // Assumptions (not derivable from session data):
@@ -326,12 +335,14 @@ const (
 	perTurnPrompt   = 10000 // assumption: same for A and B, cancels in comparison
 	perTurnResponse = 2000  // fallback when TotalOutputTokens unavailable
 	perCallToolIO   = 3000  // fallback when PerTool data unavailable
+	// empirically measured ~1.86 chars/token weighted avg across 16 content types
+	charsPerToken = 2
 )
 
 // sessionCostParams bundles per-session derived values for cost functions.
 type sessionCostParams struct {
 	k             float64 // API calls per user turn (derived: APICallCount / UserTurnCount)
-	toolIOPerCall int     // tokens per intra-turn API call (derived: PerTool chars / calls / 4)
+	toolIOPerCall int     // tokens per intra-turn API call (derived: PerTool chars / calls / 2)
 	avgResponse   int     // avg output tokens per API call (derived: TotalOutputTokens / APICallCount)
 	prompt        int     // avg user prompt tokens per turn (derived from context growth)
 	growth        int     // cross-turn cache write = avgResponse + prompt

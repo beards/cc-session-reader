@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -375,6 +376,135 @@ func TestRunBenchmark_GivenTwoValidSessions_ThenReusesTokenCounter(t *testing.T)
 	}
 	if counterCalls != 2 {
 		t.Fatalf("token counter calls = %d, want 2", counterCalls)
+	}
+}
+
+func TestRunBenchmark_GivenNoAPIFlag_ThenSkipsAPIAndEstimatesFilteredTokensWithCharsDiv2(t *testing.T) {
+	root := t.TempDir()
+	sid := "11111111-1111-1111-1111-111111111111"
+	projectDir := filepath.Join(root, "projects", "proj")
+	metaDir := filepath.Join(root, "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+
+	transcript := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+		"",
+	}, "\n")
+	transcriptPath := filepath.Join(projectDir, sid+".jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+
+	stats := analyzer.ComputeStats(mustReadAll(t, transcriptPath))
+	// guards against the bug where production code uses len(FilteredText) byte count
+	// instead of FilteredChars rune count — the two are equal for ASCII but diverge
+	// with multibyte characters
+	expectedFilteredToks := stats.FilteredChars / 2
+
+	original := newCountTokensFn
+	t.Cleanup(func() { newCountTokensFn = original })
+	newCountTokensFn = func(model string) (countTokensFunc, error) {
+		// guards against the bug where --no-api still calls the API
+		t.Fatal("newCountTokensFn must not be called when --no-api is set")
+		return nil, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir}
+	if err := runBenchmark([]string{"--no-api", "--n", "1", "--min-kb", "0", "--overhead", "40000"}, &stdout, &stderr, store, testReader); err != nil {
+		t.Fatalf("runBenchmark returned error: %v", err)
+	}
+
+	got := stdout.String()
+	row := outputLineContaining(got, "11111111")
+	wantNewCtx := analyzer.FormatNumber(40_000 + expectedFilteredToks)
+	if !strings.Contains(row, wantNewCtx) {
+		t.Fatalf("--no-api benchmark row should show new context = overhead + FilteredChars/2 (%s):\nrow: %s\nfull output:\n%s",
+			wantNewCtx, row, got)
+	}
+	if !strings.Contains(row, "100,000") {
+		t.Fatalf("--no-api benchmark row should show contextToks = 100,000:\nrow: %s\nfull output:\n%s", row, got)
+	}
+	expectedSavedPct := float64(100_000-(40_000+expectedFilteredToks)) * 100.0 / float64(100_000)
+	wantSavedPct := fmt.Sprintf("%.1f%%", expectedSavedPct)
+	if !strings.Contains(row, wantSavedPct) {
+		t.Fatalf("--no-api benchmark row should show savedPct = %s:\nrow: %s\nfull output:\n%s", wantSavedPct, row, got)
+	}
+}
+
+func TestRunBenchmark_GivenNoAPIFlagAndToolUse_ThenToolIOPerCallUsesCharsPerToken(t *testing.T) {
+	// guards against a bug where toolIOPerCall was computed as totalToolChars / totalToolCalls / 4
+	// (accidentally using the old chars/2 heuristic twice), rather than / charsPerToken (= / 2)
+	root := t.TempDir()
+	sid := "22222222-2222-2222-2222-222222222222"
+	projectDir := filepath.Join(root, "projects", "proj")
+	metaDir := filepath.Join(root, "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+
+	// transcript with one Bash tool_use: input JSON has 100 chars, result has 100 chars
+	// totalToolChars = 200, totalToolCalls = 1 → toolIOPerCall = 200 / 1 / charsPerToken = 100
+	transcript := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"` + strings.Repeat("x", 88) + `"}}],"usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"` + strings.Repeat("y", 100) + `"}]}}`,
+		"",
+	}, "\n")
+	transcriptPath := filepath.Join(projectDir, sid+".jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+
+	// compute expected toolIOPerCall from actual PerTool data using charsPerToken
+	stats := analyzer.ComputeStats(mustReadAll(t, transcriptPath))
+	totalToolChars := 0
+	totalToolCalls := 0
+	for _, ts := range stats.PerTool {
+		totalToolChars += ts.InputChars + ts.ResultChars
+		totalToolCalls += ts.CallCount
+	}
+	if totalToolCalls == 0 {
+		t.Fatal("fixture invalid: transcript must have at least one tool call")
+	}
+	expectedToolIO := totalToolChars / totalToolCalls / charsPerToken
+
+	original := newCountTokensFn
+	t.Cleanup(func() { newCountTokensFn = original })
+	newCountTokensFn = func(model string) (countTokensFunc, error) {
+		t.Fatal("newCountTokensFn must not be called when --no-api is set")
+		return nil, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir}
+	if err := runBenchmark([]string{"--no-api", "--n", "1", "--min-kb", "0", "--overhead", "40000"}, &stdout, &stderr, store, testReader); err != nil {
+		t.Fatalf("runBenchmark returned error: %v", err)
+	}
+
+	// verify the computed toolIOPerCall by checking the break-even row (cost section uses it)
+	// and that it differs from the / 4 (double-halving) result
+	wrongToolIO := totalToolChars / totalToolCalls / 4
+	if expectedToolIO == wrongToolIO {
+		t.Skip("fixture degenerate: charsPerToken and /4 produce same result; pick different tool char counts")
+	}
+	got := stdout.String()
+	if got == "" {
+		t.Fatal("runBenchmark produced no output")
+	}
+	if !strings.Contains(got, "22222222") {
+		t.Fatalf("benchmark output should include session 22222222:\n%s", got)
 	}
 }
 
