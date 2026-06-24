@@ -301,6 +301,11 @@ func printCompressionSection(out io.Writer, results []sessionBenchResult) {
 //	Turn N+1: first time as input        → cache_creation_input_tokens @ $6.25/M (Opus)
 //	Turn N+2: subsequent turns as input  → cache_read_input_tokens     @ $0.50/M (Opus)
 //
+//	Empirically verified: thinking blocks from previous turns ARE counted as
+//	input_tokens in subsequent API calls (Sonnet 4.6, 2026-06-24). The token
+//	counting docs say "ignored", but the Messages API bills them — the prompt
+//	caching docs ("DO count as input tokens when read from cache") are correct.
+//
 //	avgResponse (TotalOutputTokens / APICallCount) already includes thinking,
 //	so the growth model accounts for thinking tokens accumulating in context.
 //
