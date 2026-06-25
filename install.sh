@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="Mapleeeeeeeeeee/cc-session-reader"
+REPO="beards/cc-session-reader"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 # Claude Code stores its config under CLAUDE_CONFIG_DIR when set, else ~/.claude.
 CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
