@@ -1,9 +1,9 @@
 package parser
 
 import (
-	"os"
 	"path/filepath"
 
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudepath"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
@@ -14,10 +14,11 @@ type Store struct {
 	HeaderScanner  session.HeaderScanner
 }
 
-// DefaultStore returns a Store derived from the current user's ~/.claude.
+// DefaultStore returns a Store derived from Claude Code's configuration
+// directory (CLAUDE_CONFIG_DIR, falling back to ~/.claude).
 // Call DefaultStoreWith to inject a HeaderScanner.
 func DefaultStore() Store {
-	claudeDir := filepath.Join(homeDir(), ".claude")
+	claudeDir, _ := claudepath.Dir()
 	return Store{
 		ProjectsDir:    filepath.Join(claudeDir, "projects"),
 		SessionMetaDir: filepath.Join(claudeDir, "usage-data", "session-meta"),
@@ -29,12 +30,4 @@ func DefaultStoreWith(scanner session.HeaderScanner) Store {
 	s := DefaultStore()
 	s.HeaderScanner = scanner
 	return s
-}
-
-func homeDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return home
 }

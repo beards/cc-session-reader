@@ -12,6 +12,7 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
 const integrationFixture = "testdata/integration.jsonl"
@@ -223,7 +224,7 @@ func readIntegrationFixture(t *testing.T) ([]session.Event, map[string]bool) {
 func TestIntegration_LocalSession_GivenConfiguredSession_WhenFormatted_ThenProducesNonEmptyOutput(t *testing.T) {
 	sid := loadLocalSessionID()
 	if sid == "" {
-		t.Skip("no integration_test_session in ~/.claude/skills/cc-session/config.json")
+		t.Skip("no integration_test_session in cc-session config.json (under CLAUDE_CONFIG_DIR or ~/.claude)")
 	}
 
 	store := parser.DefaultStore()
@@ -277,11 +278,11 @@ func TestIntegration_LocalSession_GivenConfiguredSession_WhenFormatted_ThenProdu
 }
 
 func loadLocalSessionID() string {
-	home, err := os.UserHomeDir()
+	dir, err := skillpath.SkillDir()
 	if err != nil {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "skills", "cc-session", "config.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		return ""
 	}

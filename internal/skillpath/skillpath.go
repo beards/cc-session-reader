@@ -1,16 +1,17 @@
 package skillpath
 
 import (
-	"os"
 	"path/filepath"
+
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudepath"
 )
 
 const SkillDirName = "cc-session"
 
 func SkillDir() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := claudepath.Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".claude", "skills", SkillDirName), nil
+	return filepath.Join(dir, "skills", SkillDirName), nil
 }

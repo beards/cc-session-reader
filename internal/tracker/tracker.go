@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudepath"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
@@ -121,14 +122,16 @@ func ReadUsageLogFromPath(limit int, cmdFilter string, path string) ([]UsageEntr
 }
 
 // DetectCallerSession maps cwd to the most recently modified session JSONL in
-// the matching Claude Code project directory. Returns an empty string if the
-// directory does not exist, contains no JSONL files, or any other error occurs.
+// the matching Claude Code project directory. The project root is derived from
+// Claude Code's configuration directory (CLAUDE_CONFIG_DIR, falling back to
+// ~/.claude). Returns an empty string if the directory does not exist, contains
+// no JSONL files, or any other error occurs.
 func DetectCallerSession(cwd string) string {
-	home, err := os.UserHomeDir()
+	dir, err := claudepath.Dir()
 	if err != nil {
 		return ""
 	}
-	return DetectCallerSessionWithBase(cwd, filepath.Join(home, ".claude", "projects"))
+	return DetectCallerSessionWithBase(cwd, filepath.Join(dir, "projects"))
 }
 
 // DetectCallerSessionWithBase is the testable variant of DetectCallerSession

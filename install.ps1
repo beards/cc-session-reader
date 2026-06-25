@@ -20,7 +20,9 @@ function Read-HostOrDefault {
 
 $Repo      = "Mapleeeeeeeeeee/cc-session-reader"
 $InstallDir = Join-Path $env:LOCALAPPDATA "cc-session"
-$SkillDir  = Join-Path $HOME ".claude\skills\cc-session"
+# Claude Code stores its config under CLAUDE_CONFIG_DIR when set, else ~/.claude.
+$ClaudeConfigDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
+$SkillDir  = Join-Path $ClaudeConfigDir "skills\cc-session"
 $SkillUrl  = "https://raw.githubusercontent.com/$Repo/main/SKILL.md"
 
 # ── architecture detection ────────────────────────────────────────────────────

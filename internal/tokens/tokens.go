@@ -10,10 +10,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/config"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
 const (
@@ -33,7 +35,8 @@ const DefaultCountTokensModel = "claude-sonnet-4-6"
 
 // CountTokensAPI calls the Anthropic count_tokens endpoint.
 // Resolves the API key from: env ANTHROPIC_API_KEY → config file path in
-// ~/.claude/skills/<skillDirName>/config.json → error.
+// <config dir>/skills/<skillDirName>/config.json (config dir honors
+// CLAUDE_CONFIG_DIR, default ~/.claude) → error.
 func CountTokensAPI(text string) (int, error) {
 	counter, err := NewCounter(DefaultCountTokensModel)
 	if err != nil {
@@ -54,7 +57,7 @@ type Counter struct {
 func NewCounter(model string) (*Counter, error) {
 	apiKey := resolveAPIKey()
 	if apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set (set env var or configure anthropic_api_key_file in ~/.claude/skills/cc-session/config.json)")
+		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set (set env var or configure anthropic_api_key_file in %s)", configHintPath())
 	}
 	if model == "" {
 		model = DefaultCountTokensModel
@@ -70,6 +73,16 @@ func NewCounter(model string) (*Counter, error) {
 // Count returns the Anthropic input token count for text.
 func (c *Counter) Count(text string) (int, error) {
 	return countTokens(text, c.apiKey, c.endpoint, c.model, c.client)
+}
+
+// configHintPath returns the config.json path to surface in setup hints,
+// honoring CLAUDE_CONFIG_DIR via skillpath. Falls back to a ~/.claude-relative
+// display path when the config dir cannot be resolved.
+func configHintPath() string {
+	if dir, err := skillpath.SkillDir(); err == nil {
+		return filepath.Join(dir, "config.json")
+	}
+	return filepath.Join("~", ".claude", "skills", skillpath.SkillDirName, "config.json")
 }
 
 func resolveAPIKey() string {

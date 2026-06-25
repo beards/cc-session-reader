@@ -3,7 +3,9 @@ set -euo pipefail
 
 REPO="Mapleeeeeeeeeee/cc-session-reader"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-SKILL_DIR="$HOME/.claude/skills/cc-session"
+# Claude Code stores its config under CLAUDE_CONFIG_DIR when set, else ~/.claude.
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SKILL_DIR="$CLAUDE_CONFIG_DIR/skills/cc-session"
 SKILL_URL="https://raw.githubusercontent.com/${REPO}/main/SKILL.md"
 SKIP_SKILL=0
 
