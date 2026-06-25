@@ -24,6 +24,12 @@ archives:
         formats:
           - zip
 
+# Fork tag (v0.1.58-configdir.1) has a hyphen; goreleaser prerelease:auto would
+# mark it pre-release, which GitHub releases/latest (used by install.sh) skips.
+release:
+  prerelease: false
+  make_latest: true
+
 checksum:
   name_template: checksums.txt
 
